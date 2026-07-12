@@ -4,6 +4,7 @@ using System.Net;
 using System.Net.Http;
 using System.Text;
 using System.Text.RegularExpressions;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Web;
 using Newtonsoft.Json;
@@ -66,7 +67,7 @@ namespace SmartphoneMonitor.Services
             _httpClient.DefaultRequestHeaders.TryAddWithoutValidation("Upgrade-Insecure-Requests", "1");
         }
 
-        public async Task<List<Listing>> ScrapeSmartphonesAsync(int maxPages, IProgress<string>? progress = null)
+        public async Task<List<Listing>> ScrapeSmartphonesAsync(int maxPages, decimal eurToMdlRate, IProgress<string>? progress = null, CancellationToken cancellationToken = default)
         {
             var listings = new List<Listing>();
             var seenUrls = new HashSet<string>();
@@ -75,13 +76,15 @@ namespace SmartphoneMonitor.Services
 
             for (int page = 1; page <= maxPages; page++)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 progress?.Report($"Загрузка страницы {page}" + (maxPages >= 999 ? " (режим «Все»)" : $" из {maxPages}") + "...");
                 try
                 {
-                    List<Listing> list = await FetchListingsGraphQLAsync(page);
+                    List<Listing> list = await FetchListingsGraphQLAsync(page, eurToMdlRate, cancellationToken);
                     int addedInPage = 0;
                     foreach (var item in list)
                     {
+                        cancellationToken.ThrowIfCancellationRequested();
                         if (seenUrls.Contains(item.Url))
                         {
                             continue;
@@ -115,17 +118,21 @@ namespace SmartphoneMonitor.Services
                         consecutiveEmpty = 0;
                     }
                 }
+                catch (OperationCanceledException)
+                {
+                    throw;
+                }
                 catch (Exception ex)
                 {
                     progress?.Report($"⚠️ Ошибка загрузки страницы {page}: {ex.Message}");
                 }
 
-                await Task.Delay(page % 5 == 0 ? _random.Next(3000, 5000) : _random.Next(1500, 2500));
+                await Task.Delay(page % 5 == 0 ? _random.Next(3000, 5000) : _random.Next(1500, 2500), cancellationToken);
             }
             return listings;
         }
 
-        public async Task<(string phone, string seller, int views, string description)> FetchPhoneAsync(string url)
+        public async Task<(string phone, string seller, int views, string description)> FetchPhoneAsync(string url, CancellationToken cancellationToken = default)
         {
             try
             {
@@ -133,10 +140,10 @@ namespace SmartphoneMonitor.Services
                 string adId = ExtractAdIdFromUrl(url);
                 if (!string.IsNullOrEmpty(adId))
                 {
-                    views = await FetchAdViewsGraphQLAsync(adId);
+                    views = await FetchAdViewsGraphQLAsync(adId, cancellationToken);
                 }
 
-                var result = await FetchPageWithRetryAsync(url, "https://999.md/ro/list/phone-and-communication/mobile-phones");
+                var result = await FetchPageWithRetryAsync(url, "https://999.md/ro/list/phone-and-communication/mobile-phones", 2, cancellationToken);
                 if (string.IsNullOrEmpty(result.html) || IsBlockedResponse(result.html, result.statusCode))
                 {
                     return (phone: string.Empty, seller: string.Empty, views: views, description: string.Empty);
@@ -202,7 +209,7 @@ namespace SmartphoneMonitor.Services
             }
         }
 
-        private async Task<List<Listing>> FetchListingsGraphQLAsync(int page)
+        private async Task<List<Listing>> FetchListingsGraphQLAsync(int page, decimal eurToMdlRate, CancellationToken cancellationToken)
         {
             var listings = new List<Listing>();
             string json = $"{{\n  \"input\": {{\n    \"source\": \"AD_SOURCE_DESKTOP_REDESIGN\",\n    \"sort\": \"SORT_ADS_DATE_DESC\",\n    \"pagination\": {{\n      \"limit\": 78,\n      \"skip\": {(page - 1) * 78}\n    }},\n    \"filters\": [\n      {{\n        \"filterId\": 6,\n        \"features\": [\n          {{\n            \"featureId\": 2,\n            \"unit\": \"UNIT_MDL\",\n            \"range\": {{\n              \"min\": \"1000\",\n              \"max\": \"5000\"\n            }}\n          }}\n        ]\n      }},\n      {{\n        \"filterId\": 16,\n        \"features\": [\n          {{\n            \"featureId\": 1,\n            \"optionIds\": [776]\n          }}\n        ]\n      }},\n      {{\n        \"filterId\": 1084,\n        \"features\": [\n          {{\n            \"featureId\": 593,\n            \"optionIds\": [6370, 6371]\n          }}\n        ]\n      }},\n      {{\n        \"filterId\": 290,\n        \"features\": [\n          {{\n            \"featureId\": 7,\n            \"optionIds\": [12900]\n          }}\n        ]\n      }}\n    ],\n    \"subCategoryId\": 40\n  }}\n}}";
@@ -221,7 +228,7 @@ namespace SmartphoneMonitor.Services
             httpRequestMessage.Headers.TryAddWithoutValidation("Referer", "https://999.md/ro/list/phone-and-communication/mobile-phones");
             httpRequestMessage.Headers.TryAddWithoutValidation("Origin", "https://999.md");
 
-            var obj = await _httpClient.SendAsync(httpRequestMessage);
+            var obj = await _httpClient.SendAsync(httpRequestMessage, cancellationToken);
             obj.EnsureSuccessStatusCode();
             var jObject = JsonConvert.DeserializeObject<JObject>(await obj.Content.ReadAsStringAsync());
             if (jObject == null)
@@ -285,7 +292,7 @@ namespace SmartphoneMonitor.Services
 
                     if (unit == "UNIT_EUR")
                     {
-                        price = Math.Round(price * Constants.EurToMdl, 0);
+                        price = Math.Round(price * eurToMdlRate, 0);
                     }
 
                     if (price > 0m && (price < 400m || price > 5000m))
@@ -352,7 +359,7 @@ namespace SmartphoneMonitor.Services
             return match.Success ? match.Value : string.Empty;
         }
 
-        private async Task<int> FetchAdViewsGraphQLAsync(string adId)
+        private async Task<int> FetchAdViewsGraphQLAsync(string adId, CancellationToken cancellationToken)
         {
             try
             {
@@ -366,7 +373,7 @@ namespace SmartphoneMonitor.Services
                 httpRequestMessage.Content = new StringContent(JsonConvert.SerializeObject(value), Encoding.UTF8, "application/json");
                 httpRequestMessage.Headers.TryAddWithoutValidation("User-Agent", _userAgents[_random.Next(_userAgents.Length)]);
                 
-                var httpResponseMessage = await _httpClient.SendAsync(httpRequestMessage);
+                var httpResponseMessage = await _httpClient.SendAsync(httpRequestMessage, cancellationToken);
                 if (httpResponseMessage.IsSuccessStatusCode)
                 {
                     var jToken = JsonConvert.DeserializeObject<JObject>(await httpResponseMessage.Content.ReadAsStringAsync())?["data"]?["adViews"]?["total"];
@@ -411,14 +418,15 @@ namespace SmartphoneMonitor.Services
             return -1;
         }
 
-        private async Task<(string? html, int statusCode)> FetchPageWithRetryAsync(string url, string referer, int maxRetries = 2)
+        private async Task<(string? html, int statusCode)> FetchPageWithRetryAsync(string url, string referer, int maxRetries, CancellationToken cancellationToken)
         {
             int lastStatus = 0;
             for (int attempt = 0; attempt <= maxRetries; attempt++)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 if (attempt > 0)
                 {
-                    await Task.Delay(_random.Next(3000, 5000) * attempt);
+                    await Task.Delay(_random.Next(3000, 5000) * attempt, cancellationToken);
                 }
                 try
                 {
@@ -431,13 +439,17 @@ namespace SmartphoneMonitor.Services
                     httpRequestMessage.Headers.TryAddWithoutValidation("sec-ch-ua-mobile", "?0");
                     httpRequestMessage.Headers.TryAddWithoutValidation("sec-ch-ua-platform", "\"Windows\"");
 
-                    var httpResponseMessage = await _httpClient.SendAsync(httpRequestMessage);
+                    var httpResponseMessage = await _httpClient.SendAsync(httpRequestMessage, cancellationToken);
                     lastStatus = (int)httpResponseMessage.StatusCode;
                     if (lastStatus == 429 || lastStatus == 403)
                     {
                         continue;
                     }
                     return (html: await httpResponseMessage.Content.ReadAsStringAsync(), statusCode: lastStatus);
+                }
+                catch (OperationCanceledException)
+                {
+                    throw;
                 }
                 catch (Exception) when (attempt < maxRetries)
                 {

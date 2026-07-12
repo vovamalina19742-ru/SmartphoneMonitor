@@ -165,12 +165,20 @@
                 <TextBlock FontSize="13" Foreground="{StaticResource Primary}" Margin="0,8,0,0" FontWeight="SemiBold" Text="{Binding Blacklist.Count, StringFormat=Номеров в списке: {0}}" />
               </StackPanel>
             </Border>
-            <Button Style="{StaticResource Btn}" Width="260" Height="48" FontSize="16" HorizontalAlignment="Left" Command="{Binding StartCommand}">
-              <StackPanel Orientation="Horizontal">
-                <TextBlock Text="🚀 " FontSize="16" VerticalAlignment="Center" />
-                <TextBlock Text="Запустить анализ" VerticalAlignment="Center" />
-              </StackPanel>
-            </Button>
+            <StackPanel Orientation="Horizontal">
+              <Button Style="{StaticResource Btn}" Width="220" Height="48" FontSize="16" HorizontalAlignment="Left" Command="{Binding StartCommand}">
+                <StackPanel Orientation="Horizontal">
+                  <TextBlock Text="🚀 " FontSize="16" VerticalAlignment="Center" />
+                  <TextBlock Text="Запустить анализ" VerticalAlignment="Center" />
+                </StackPanel>
+              </Button>
+              <Button Style="{StaticResource BtnDanger}" Width="100" Height="48" FontSize="16" Margin="12,0,0,0" Command="{Binding CancelCommand}">
+                <StackPanel Orientation="Horizontal">
+                  <TextBlock Text="⏹️ " FontSize="14" VerticalAlignment="Center" />
+                  <TextBlock Text="Стоп" VerticalAlignment="Center" />
+                </StackPanel>
+              </Button>
+            </StackPanel>
             <Border Margin="0,16,0,0" Visibility="{Binding IsBusy, Converter={StaticResource BoolVis}}">
               <ProgressBar IsIndeterminate="True" Height="4" Foreground="{StaticResource Accent}" Background="#00FFFFFF" BorderThickness="0" />
             </Border>

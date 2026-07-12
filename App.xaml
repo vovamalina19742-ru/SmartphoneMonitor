@@ -50,6 +50,17 @@
           </Trigger>
         </Style.Triggers>
       </Style>
+      <Style x:Key="BtnDanger" TargetType="{x:Type Button}" BasedOn="{StaticResource Btn}">
+        <Setter Property="Background" Value="{StaticResource Danger}" />
+        <Style.Triggers>
+          <Trigger Property="UIElement.IsMouseOver" Value="True">
+            <Setter Property="Background" Value="#EF5350" />
+          </Trigger>
+          <Trigger Property="IsEnabled" Value="False">
+            <Setter Property="Background" Value="#B0BEC5" />
+          </Trigger>
+        </Style.Triggers>
+      </Style>
       <Style x:Key="BtnSm" TargetType="{x:Type Button}" BasedOn="{StaticResource Btn}">
         <Setter Property="Padding" Value="12,6" />
         <Setter Property="FontSize" Value="12" />

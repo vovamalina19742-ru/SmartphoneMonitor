@@ -25,6 +25,9 @@ namespace SmartphoneMonitor.ViewModels
         private readonly Dispatcher _dispatcher;
         private readonly Random _random = new Random();
 
+        private List<Listing>? _allScrapedListings;
+        private CancellationTokenSource? _cts;
+
         private bool _isBusy;
         private string _status = "Готов к работе";
         private int _maxPages = 5;
@@ -259,6 +262,7 @@ namespace SmartphoneMonitor.ViewModels
         // Commands
         public RelayCommand SetPagesCommand { get; }
         public RelayCommand StartCommand { get; }
+        public RelayCommand CancelCommand { get; }
         public RelayCommand OpenUrlCommand { get; }
         public RelayCommand AddToBlacklistCommand { get; }
         public RelayCommand RemoveBlacklistCommand { get; }
@@ -343,13 +347,7 @@ namespace SmartphoneMonitor.ViewModels
             // Load saved settings
             LoadSavedSettings();
 
-            // Fetch and update EUR rate asynchronously without blocking
-            Task.Run(async () =>
-            {
-                decimal rate = await _exchangeRateService.GetEurToMdlRateAsync(19.5m);
-                Constants.EurToMdl = rate;
-                LogMessage($"🏦 Загружен курс НБМ: 1 EUR = {rate:F4} MDL");
-            });
+            CancelCommand = new RelayCommand(p => CancelScan(), p => IsBusy);
 
             // Clean database cache older than 30 days
             Task.Run(() =>
@@ -360,6 +358,25 @@ namespace SmartphoneMonitor.ViewModels
                 }
                 catch { }
             });
+
+            // Fetch and update EUR rate asynchronously without blocking
+            Task.Run(async () =>
+            {
+                decimal rate = await _exchangeRateService.GetEurToMdlRateAsync(Constants.EurToMdl);
+                Constants.EurToMdl = rate;
+                _databaseService.SaveSetting("EurToMdl", rate.ToString(System.Globalization.CultureInfo.InvariantCulture));
+                LogMessage($"🏦 Загружен курс НБМ: 1 EUR = {rate:F4} MDL");
+            });
+        }
+
+        private void CancelScan()
+        {
+            if (_cts != null && !_cts.IsCancellationRequested)
+            {
+                _cts.Cancel();
+                LogMessage("⏹️ Сканирование отменено пользователем.");
+                Status = "Отмена...";
+            }
         }
 
         private void LoadSavedSettings()
@@ -371,6 +388,12 @@ namespace SmartphoneMonitor.ViewModels
                 foreach (var entry in savedBlacklist)
                 {
                     Blacklist.Add(entry);
+                }
+
+                // EUR Rate
+                if (decimal.TryParse(_databaseService.GetSetting("EurToMdl", "19.5"), out var savedRate))
+                {
+                    Constants.EurToMdl = savedRate;
                 }
 
                 // Settings
@@ -417,13 +440,20 @@ namespace SmartphoneMonitor.ViewModels
 
         private async void OnAutoMonitorTick(object? sender, EventArgs e)
         {
-            if (IsBusy)
+            try
             {
-                LogMessage("⏱️ Очередной цикл авто-мониторинга пропущен (система занята).");
-                return;
+                if (IsBusy)
+                {
+                    LogMessage("⏱️ Очередной цикл авто-мониторинга пропущен (система занята).");
+                    return;
+                }
+                LogMessage("⏱️ Запуск фонового авто-мониторинга...");
+                await RunAnalysisAsync(isAutoRun: true);
             }
-            LogMessage("⏱️ Запуск фонового авто-мониторинга...");
-            await RunAnalysisAsync(isAutoRun: true);
+            catch (Exception ex)
+            {
+                LogMessage($"❌ Ошибка авто-мониторинга: {ex.Message}");
+            }
         }
 
         private async Task RunAnalysisAsync(bool isAutoRun = false)
@@ -443,13 +473,19 @@ namespace SmartphoneMonitor.ViewModels
                 });
             });
 
+            _cts = new CancellationTokenSource();
+            var token = _cts.Token;
+
             try
             {
                 // Fetch price history before run to identify new deals
                 var preRunHistory = _databaseService.GetPriceHistory();
 
-                var rawListings = await Task.Run(() => _scraperService.ScrapeSmartphonesAsync(MaxPages, progressReporter));
+                var rawListings = await Task.Run(() => _scraperService.ScrapeSmartphonesAsync(MaxPages, Constants.EurToMdl, progressReporter, token), token);
                 
+                token.ThrowIfCancellationRequested();
+                _allScrapedListings = rawListings;
+
                 if (rawListings.Count == 0)
                 {
                     SummaryText = "Объявлений не найдено.";
@@ -465,12 +501,13 @@ namespace SmartphoneMonitor.ViewModels
                     var semaphore = new SemaphoreSlim(3);
                     var tasks = rawListings.Select(async l =>
                     {
-                        await semaphore.WaitAsync();
+                        await semaphore.WaitAsync(token);
                         try
                         {
+                            token.ThrowIfCancellationRequested();
                             // Add a random delay to prevent concurrent burst requests
-                            await Task.Delay(_random.Next(200, 600));
-                            var details = await _scraperService.FetchPhoneAsync(l.Url);
+                            await Task.Delay(_random.Next(200, 600), token);
+                            var details = await _scraperService.FetchPhoneAsync(l.Url, token);
                             l.PhoneNumber = details.phone;
                             l.SellerName = details.seller;
                             l.Description = details.description;
@@ -478,6 +515,10 @@ namespace SmartphoneMonitor.ViewModels
                             {
                                 l.Views = details.views;
                             }
+                        }
+                        catch (OperationCanceledException)
+                        {
+                            throw;
                         }
                         catch { }
                         finally
@@ -495,13 +536,15 @@ namespace SmartphoneMonitor.ViewModels
                     await Task.WhenAll(tasks);
                 }
 
+                token.ThrowIfCancellationRequested();
+
                 // Save new price history
                 _databaseService.SavePriceHistory(rawListings);
 
                 // Run data analysis
                 Status = "Анализ данных...";
                 var blacklistPhones = Blacklist.Select(b => b.PhoneNumber).ToList();
-                var analysisResult = await Task.Run(() => _analysisService.Analyze(rawListings, blacklistPhones, preRunHistory));
+                var analysisResult = await Task.Run(() => _analysisService.Analyze(rawListings, blacklistPhones, preRunHistory), token);
 
                 Result = analysisResult;
 
@@ -530,6 +573,11 @@ namespace SmartphoneMonitor.ViewModels
                 SummaryText = $"Анализ завершен за {analysisResult.AnalysisDuration.TotalSeconds:F1} сек. Найдено: {analysisResult.TotalListings} всего, {analysisResult.PrivateListings} частных, {analysisResult.ChronicSellers.Count} перекупщиков.";
                 LogMessage("✅ Анализ успешно завершен.");
             }
+            catch (OperationCanceledException)
+            {
+                LogMessage("⏹️ Сканирование было отменено.");
+                SummaryText = "Сканирование отменено.";
+            }
             catch (Exception ex)
             {
                 LogMessage($"❌ Критическая ошибка при анализе: {ex.Message}");
@@ -540,6 +588,8 @@ namespace SmartphoneMonitor.ViewModels
                 IsBusy = false;
                 Progress = 0;
                 Status = "Готов к работе";
+                _cts?.Dispose();
+                _cts = null;
             }
         }
 
@@ -675,32 +725,36 @@ namespace SmartphoneMonitor.ViewModels
                 string norm = DataAnalysisService.NormalizePhone(phone);
                 if (string.IsNullOrEmpty(norm)) return;
 
-                if (Blacklist.Any(b => DataAnalysisService.NormalizePhone(b.PhoneNumber) == norm))
+                _dispatcher.Invoke(() =>
                 {
-                    LogMessage($"⚠️ Номер {phone} уже в черном списке.");
-                    return;
-                }
+                    if (Blacklist.Any(b => DataAnalysisService.NormalizePhone(b.PhoneNumber) == norm))
+                    {
+                        LogMessage($"⚠️ Номер {phone} уже в черном списке.");
+                        return;
+                    }
 
-                _databaseService.AddBlacklist(phone, reason);
-                Blacklist.Add(new BlacklistEntry
-                {
-                    PhoneNumber = phone,
-                    Reason = reason,
-                    DateAdded = DateTime.Now
+                    _databaseService.AddBlacklist(phone, reason);
+                    Blacklist.Add(new BlacklistEntry
+                    {
+                        PhoneNumber = phone,
+                        Reason = reason,
+                        DateAdded = DateTime.Now
+                    });
+
+                    LogMessage($"🚫 Добавлен в ЧС: {phone} ({reason})");
+                    OnPropertyChanged(nameof(Blacklist));
                 });
 
-                LogMessage($"🚫 Добавлен в ЧС: {phone} ({reason})");
-                OnPropertyChanged(nameof(Blacklist));
-
-                if (Result != null)
+                if (Result != null && _allScrapedListings != null)
                 {
                     Task.Run(() =>
                     {
-                        var blacklistPhones = Blacklist.Select(b => b.PhoneNumber).ToList();
-                        var analysisResult = _analysisService.Analyze(Result.AllPrivateListings.Concat(Result.BrandStats.SelectMany(b => new List<Listing>())).ToList(), blacklistPhones, _databaseService.GetPriceHistory());
+                        var blacklistPhones = _dispatcher.Invoke(() => Blacklist.Select(b => b.PhoneNumber).ToList());
+                        var analysisResult = _analysisService.Analyze(_allScrapedListings, blacklistPhones, _databaseService.GetPriceHistory());
                         _dispatcher.Invoke(() =>
                         {
                             Result = analysisResult;
+                            UpdateViewsDistribution(analysisResult.AllPrivateListings);
                         });
                     });
                 }
@@ -715,15 +769,32 @@ namespace SmartphoneMonitor.ViewModels
         {
             try
             {
-                _databaseService.RemoveBlacklist(phone);
-                var entry = Blacklist.FirstOrDefault(b => b.PhoneNumber == phone);
-                if (entry != null)
+                _dispatcher.Invoke(() =>
                 {
-                    Blacklist.Remove(entry);
-                }
+                    _databaseService.RemoveBlacklist(phone);
+                    var entry = Blacklist.FirstOrDefault(b => b.PhoneNumber == phone);
+                    if (entry != null)
+                    {
+                        Blacklist.Remove(entry);
+                    }
 
-                LogMessage($"✅ Удален из ЧС: {phone}");
-                OnPropertyChanged(nameof(Blacklist));
+                    LogMessage($"✅ Удален из ЧС: {phone}");
+                    OnPropertyChanged(nameof(Blacklist));
+                });
+
+                if (Result != null && _allScrapedListings != null)
+                {
+                    Task.Run(() =>
+                    {
+                        var blacklistPhones = _dispatcher.Invoke(() => Blacklist.Select(b => b.PhoneNumber).ToList());
+                        var analysisResult = _analysisService.Analyze(_allScrapedListings, blacklistPhones, _databaseService.GetPriceHistory());
+                        _dispatcher.Invoke(() =>
+                        {
+                            Result = analysisResult;
+                            UpdateViewsDistribution(analysisResult.AllPrivateListings);
+                        });
+                    });
+                }
             }
             catch (Exception ex)
             {
