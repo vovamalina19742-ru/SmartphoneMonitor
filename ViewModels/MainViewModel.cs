@@ -9,6 +9,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Threading;
+using System.Media;
 using SmartphoneMonitor.Models;
 using SmartphoneMonitor.Services;
 using SmartphoneMonitor.Views;
@@ -21,6 +22,7 @@ namespace SmartphoneMonitor.ViewModels
         private readonly DataAnalysisService _analysisService;
         private readonly DatabaseService _databaseService;
         private readonly ExchangeRateService _exchangeRateService;
+        private readonly TelegramNotificationService _telegramService;
         private readonly DispatcherTimer _autoMonitorTimer;
         private readonly Dispatcher _dispatcher;
         private readonly Random _random = new Random();
@@ -34,7 +36,12 @@ namespace SmartphoneMonitor.ViewModels
         private bool _fetchDetails = true;
         private bool _isAutoMonitoring;
         private string _selectedIntervalString = "5 минут";
-        
+
+        private string _telegramToken = string.Empty;
+        private string _telegramChatId = string.Empty;
+        private bool _telegramEnabled;
+        private bool _soundAlertEnabled = true;
+
         private AnalysisResult _result = new AnalysisResult();
         private bool _sortByViews;
         private int _minViews;
@@ -122,6 +129,30 @@ namespace SmartphoneMonitor.ViewModels
                     UpdateAutoMonitorState();
                 }
             }
+        }
+
+        public string TelegramToken
+        {
+            get => _telegramToken;
+            set => SetProperty(ref _telegramToken, value);
+        }
+
+        public string TelegramChatId
+        {
+            get => _telegramChatId;
+            set => SetProperty(ref _telegramChatId, value);
+        }
+
+        public bool TelegramEnabled
+        {
+            get => _telegramEnabled;
+            set => SetProperty(ref _telegramEnabled, value);
+        }
+
+        public bool SoundAlertEnabled
+        {
+            get => _soundAlertEnabled;
+            set => SetProperty(ref _soundAlertEnabled, value);
         }
 
         public ObservableCollection<string> IntervalOptions { get; } = new ObservableCollection<string>
@@ -268,14 +299,24 @@ namespace SmartphoneMonitor.ViewModels
         public RelayCommand RemoveBlacklistCommand { get; }
         public RelayCommand AddBlacklistCommand { get; }
         public RelayCommand SetMinViewsCommand { get; }
+        public RelayCommand SaveSettingsCommand { get; }
+        public RelayCommand TestTelegramCommand { get; }
 
         public MainViewModel()
         {
+            _dispatcher = Dispatcher.CurrentDispatcher;
             _scraperService = new WebScraperService();
             _analysisService = new DataAnalysisService();
             _databaseService = new DatabaseService();
             _exchangeRateService = new ExchangeRateService();
-            _dispatcher = Dispatcher.CurrentDispatcher;
+            _telegramService = new TelegramNotificationService();
+            _telegramService.BlacklistRequested += (phone, reason) =>
+            {
+                _dispatcher.Invoke(() =>
+                {
+                    AddPhoneToBlacklist(phone, reason);
+                });
+            };
 
             _autoMonitorTimer = new DispatcherTimer();
             _autoMonitorTimer.Tick += OnAutoMonitorTick;
@@ -344,8 +385,52 @@ namespace SmartphoneMonitor.ViewModels
                 }
             });
 
+            SaveSettingsCommand = new RelayCommand(p =>
+            {
+                try
+                {
+                    _databaseService.SaveSetting("TelegramToken", TelegramToken);
+                    _databaseService.SaveSetting("TelegramChatId", TelegramChatId);
+                    _databaseService.SaveSetting("TelegramEnabled", TelegramEnabled.ToString());
+                    _databaseService.SaveSetting("SoundAlertEnabled", SoundAlertEnabled.ToString());
+                    LogMessage("💾 Настройки успешно сохранены!");
+
+                    if (TelegramEnabled)
+                    {
+                        _telegramService.StartPolling(TelegramToken, TelegramChatId);
+                    }
+                    else
+                    {
+                        _telegramService.StopPolling();
+                    }
+                }
+                catch (Exception ex)
+                {
+                    LogMessage($"❌ Ошибка сохранения настроек: {ex.Message}");
+                }
+            });
+
+            TestTelegramCommand = new RelayCommand(async p =>
+            {
+                LogMessage("🧪 Проверка отправки тестового сообщения в Telegram...");
+                bool ok = await _telegramService.SendTestMessageAsync(TelegramToken, TelegramChatId);
+                if (ok)
+                {
+                    LogMessage("✅ Тестовое сообщение успешно отправлено! Проверьте ваш Telegram.");
+                }
+                else
+                {
+                    LogMessage("❌ Ошибка отправки тестового сообщения. Проверьте Token и Chat ID.");
+                }
+            });
+
             // Load saved settings
             LoadSavedSettings();
+
+            if (TelegramEnabled && !string.IsNullOrEmpty(TelegramToken))
+            {
+                _telegramService.StartPolling(TelegramToken, TelegramChatId);
+            }
 
             CancelCommand = new RelayCommand(p => CancelScan(), p => IsBusy);
 
@@ -404,6 +489,16 @@ namespace SmartphoneMonitor.ViewModels
                 _fetchDetails = bool.TryParse(_databaseService.GetSetting("FetchDetails", "true"), out bool details) && details;
                 _isAutoMonitoring = bool.TryParse(_databaseService.GetSetting("IsAutoMonitoring", "false"), out bool auto) && auto;
                 _selectedIntervalString = _databaseService.GetSetting("SelectedIntervalString", "5 минут");
+
+                _telegramToken = _databaseService.GetSetting("TelegramToken", string.Empty);
+                _telegramChatId = _databaseService.GetSetting("TelegramChatId", string.Empty);
+                _telegramEnabled = bool.TryParse(_databaseService.GetSetting("TelegramEnabled", "false"), out bool tgEnabled) && tgEnabled;
+                _soundAlertEnabled = bool.TryParse(_databaseService.GetSetting("SoundAlertEnabled", "true"), out bool sndEnabled) && sndEnabled;
+
+                OnPropertyChanged(nameof(TelegramToken));
+                OnPropertyChanged(nameof(TelegramChatId));
+                OnPropertyChanged(nameof(TelegramEnabled));
+                OnPropertyChanged(nameof(SoundAlertEnabled));
 
                 UpdateAutoMonitorState();
             }
@@ -568,6 +663,31 @@ namespace SmartphoneMonitor.ViewModels
                             toast.Show();
                         }
                     });
+
+                    if (SoundAlertEnabled)
+                    {
+                        try
+                        {
+                            SystemSounds.Asterisk.Play();
+                        }
+                        catch { }
+                    }
+
+                    if (TelegramEnabled && !string.IsNullOrEmpty(TelegramToken))
+                    {
+                        foreach (var deal in newDeals)
+                        {
+                            var d = deal;
+                            _ = Task.Run(async () =>
+                            {
+                                try
+                                {
+                                    await _telegramService.SendHotDealNotificationAsync(TelegramToken, TelegramChatId, d);
+                                }
+                                catch { }
+                            });
+                        }
+                    }
                 }
 
                 SummaryText = $"Анализ завершен за {analysisResult.AnalysisDuration.TotalSeconds:F1} сек. Найдено: {analysisResult.TotalListings} всего, {analysisResult.PrivateListings} частных, {analysisResult.ChronicSellers.Count} перекупщиков.";

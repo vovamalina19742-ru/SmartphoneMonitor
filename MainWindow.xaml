@@ -694,6 +694,40 @@
           </Border>
         </Grid>
       </TabItem>
+      <TabItem Header="⚙️ Настройки" Style="{StaticResource TI}">
+        <Grid>
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="450" />
+            <ColumnDefinition Width="*" />
+          </Grid.ColumnDefinitions>
+          <Border Background="{StaticResource BgCard}" CornerRadius="10" Padding="24" Margin="0,0,12,0" VerticalAlignment="Top">
+            <StackPanel>
+              <TextBlock Text="Настройки Telegram оповещений" FontSize="15" FontWeight="Bold" Foreground="{StaticResource TextMain}" Margin="0,0,0,16" />
+              
+              <CheckBox Content="Включить Telegram-оповещения" IsChecked="{Binding TelegramEnabled}" Margin="0,0,0,16" FontSize="13" Foreground="{StaticResource TextMain}" />
+              
+              <TextBlock Text="Токен Telegram-бота" FontSize="12" Foreground="{StaticResource TextSub}" Margin="0,0,0,6" />
+              <TextBox Style="{StaticResource TB}" Margin="0,0,0,16" Height="32" Text="{Binding TelegramToken, UpdateSourceTrigger=PropertyChanged}" />
+              
+              <TextBlock Text="ID чата / Получателя (Chat ID)" FontSize="12" Foreground="{StaticResource TextSub}" Margin="0,0,0,6" />
+              <TextBox Style="{StaticResource TB}" Margin="0,0,0,24" Height="32" Text="{Binding TelegramChatId, UpdateSourceTrigger=PropertyChanged}" />
+              
+              <Button Content="🧪 Проверить отправку" Style="{StaticResource Btn}" Height="36" Margin="0,0,0,8" Command="{Binding TestTelegramCommand}" />
+              <TextBlock Text="Бот должен быть запущен (отправьте ему команду /start в Telegram перед проверкой)" FontSize="11" Foreground="{StaticResource TextSub}" TextWrapping="Wrap" HorizontalAlignment="Center" TextAlignment="Center" Margin="0,0,0,16" />
+            </StackPanel>
+          </Border>
+          
+          <Border Grid.Column="1" Background="{StaticResource BgCard}" CornerRadius="10" Padding="24" VerticalAlignment="Top">
+            <StackPanel>
+              <TextBlock Text="Настройки аудио и сохранения" FontSize="15" FontWeight="Bold" Foreground="{StaticResource TextMain}" Margin="0,0,0,16" />
+              
+              <CheckBox Content="Звуковой сигнал при нахождении сделок" IsChecked="{Binding SoundAlertEnabled}" Margin="0,0,0,32" FontSize="13" Foreground="{StaticResource TextMain}" />
+              
+              <Button Content="💾 Сохранить все настройки" Style="{StaticResource Btn}" Height="40" Background="{StaticResource Primary}" Foreground="White" Command="{Binding SaveSettingsCommand}" />
+            </StackPanel>
+          </Border>
+        </Grid>
+      </TabItem>
       <TabItem Header="📋 Лог" Style="{StaticResource TI}">
         <Border Background="#1A1B2E" CornerRadius="10" Padding="16">
           <ScrollViewer VerticalScrollBarVisibility="Auto">
