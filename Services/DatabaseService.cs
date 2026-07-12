@@ -54,6 +54,7 @@ namespace SmartphoneMonitor.Services
                             Key TEXT PRIMARY KEY,
                             Value TEXT
                         );
+                        CREATE INDEX IF NOT EXISTS idx_price_history_last_updated ON PriceHistory(LastUpdated);
                     ";
                     command.ExecuteNonQuery();
                 }

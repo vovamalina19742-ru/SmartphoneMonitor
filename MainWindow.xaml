@@ -430,6 +430,28 @@
                                   <TextBlock FontSize="11" Foreground="{StaticResource PrimaryL}" Text="{Binding PhoneNumber}" />
                                 </StackPanel>
                               </StackPanel>
+                              <TextBlock FontSize="11" Foreground="#E53935" FontWeight="SemiBold" Margin="0,4,0,0" Text="{Binding DefectsLabel}">
+                                <FrameworkElement.Style>
+                                  <Style TargetType="{x:Type TextBlock}">
+                                    <Style.Triggers>
+                                      <DataTrigger Value="" Binding="{Binding DefectsLabel}">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                      </DataTrigger>
+                                    </Style.Triggers>
+                                  </Style>
+                                </FrameworkElement.Style>
+                              </TextBlock>
+                              <TextBlock FontSize="11" Foreground="#43A047" FontWeight="Bold" Margin="0,4,0,0" Text="{Binding MarginLabel}">
+                                <FrameworkElement.Style>
+                                  <Style TargetType="{x:Type TextBlock}">
+                                    <Style.Triggers>
+                                      <DataTrigger Value="" Binding="{Binding MarginLabel}">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                      </DataTrigger>
+                                    </Style.Triggers>
+                                  </Style>
+                                </FrameworkElement.Style>
+                              </TextBlock>
                             </StackPanel>
                             <TextBlock Grid.Column="1" FontSize="12" Foreground="{StaticResource Primary}" VerticalAlignment="Center" Text="{Binding Brand}" />
                             <Border Grid.Column="4" Background="#F0F9FF" CornerRadius="4" Padding="4,2" Margin="4,0,0,0" VerticalAlignment="Center">
@@ -582,6 +604,28 @@
                               <TextBlock FontSize="10" Foreground="{StaticResource Primary}" Text="{Binding Views, StringFormat=👁 {0}}" />
                             </Border>
                           </StackPanel>
+                          <TextBlock FontSize="11" Foreground="#E53935" FontWeight="SemiBold" Margin="0,4,0,0" Text="{Binding DefectsLabel}">
+                            <FrameworkElement.Style>
+                              <Style TargetType="{x:Type TextBlock}">
+                                <Style.Triggers>
+                                  <DataTrigger Value="" Binding="{Binding DefectsLabel}">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                  </DataTrigger>
+                                </Style.Triggers>
+                              </Style>
+                            </FrameworkElement.Style>
+                          </TextBlock>
+                          <TextBlock FontSize="11" Foreground="#43A047" FontWeight="Bold" Margin="0,4,0,0" Text="{Binding MarginLabel}">
+                            <FrameworkElement.Style>
+                              <Style TargetType="{x:Type TextBlock}">
+                                <Style.Triggers>
+                                  <DataTrigger Value="" Binding="{Binding MarginLabel}">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                  </DataTrigger>
+                                </Style.Triggers>
+                              </Style>
+                            </FrameworkElement.Style>
+                          </TextBlock>
                         </StackPanel>
                         <StackPanel Grid.Column="1" VerticalAlignment="Center">
                           <TextBlock FontSize="13" FontWeight="Bold" Foreground="{StaticResource Primary}" Text="{Binding Brand}" />

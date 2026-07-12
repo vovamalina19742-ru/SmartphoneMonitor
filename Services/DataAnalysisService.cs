@@ -132,50 +132,57 @@ namespace SmartphoneMonitor.Services
             foreach (var group in brandGroups)
             {
                 var sorted = group.OrderBy((Listing l) => l.PriceValue).ToList();
-                decimal medianPrice = 0m;
-                if (sorted.Count > 0)
-                {
-                    int mid = sorted.Count / 2;
-                    medianPrice = sorted.Count % 2 == 0 
-                        ? (sorted[mid - 1].PriceValue + sorted[mid].PriceValue) / 2m 
-                        : sorted[mid].PriceValue;
-                }
+                var prices = sorted.Select(l => l.PriceValue).ToList();
+                var filteredPrices = FilterOutliersIQR(prices);
+                
+                decimal medianPrice = GetMedian(filteredPrices);
 
                 analysisResult.BrandStats.Add(new BrandStat
                 {
                     Brand = group.Key,
                     Count = group.Count(),
                     Percent = Math.Round((double)group.Count() * 100.0 / validPriceCount, 1),
-                    MinPrice = sorted.First().PriceValue,
-                    MaxPrice = sorted.Last().PriceValue,
+                    MinPrice = filteredPrices.Count > 0 ? filteredPrices.First() : (sorted.Count > 0 ? sorted.First().PriceValue : 0m),
+                    MaxPrice = filteredPrices.Count > 0 ? filteredPrices.Last() : (sorted.Count > 0 ? sorted.Last().PriceValue : 0m),
                     MedianPrice = medianPrice
                 });
             }
 
-            // Extract models and battery health
+            // Extract models, battery health, and defects
             foreach (var listing in list)
             {
                 listing.Model = ExtractModel(listing.Title, listing.Brand);
                 listing.BatteryHealth = ExtractBatteryHealth(listing.Title, listing.Description, listing.Brand);
+
+                var defectResult = DetectDefectsAndEstimateRepair(listing.Title, listing.Description, listing.Brand, listing.Model, listing.BatteryHealth);
+                listing.Defects = defectResult.defects;
+                listing.RepairCost = defectResult.repairCost;
+                listing.IsStolen = defectResult.isStolen;
             }
 
-            // Deviation calculation groups
+            // Deviation calculation groups with IQR-filtered Medians
             var exactModelPrices = list
                 .Where(listing => listing.PriceValue >= 1000m && listing.PriceValue <= 5000m)
                 .GroupBy(listing => new { listing.Brand, listing.Model, listing.StorageGB })
-                .ToDictionary(g => g.Key, g => new
-                {
-                    AveragePrice = Math.Round(g.Average(listing => listing.PriceValue), 0),
-                    Count = g.Count()
+                .ToDictionary(g => g.Key, g => {
+                    var prices = g.Select(l => l.PriceValue).ToList();
+                    var filtered = FilterOutliersIQR(prices);
+                    return new {
+                        MedianPrice = Math.Round(GetMedian(filtered), 0),
+                        Count = filtered.Count
+                    };
                 });
 
             var generalModelPrices = list
                 .Where(listing => listing.PriceValue >= 1000m && listing.PriceValue <= 5000m)
                 .GroupBy(listing => new { listing.Brand, listing.Model })
-                .ToDictionary(g => g.Key, g => new
-                {
-                    AveragePrice = Math.Round(g.Average(listing => listing.PriceValue), 0),
-                    Count = g.Count()
+                .ToDictionary(g => g.Key, g => {
+                    var prices = g.Select(l => l.PriceValue).ToList();
+                    var filtered = FilterOutliersIQR(prices);
+                    return new {
+                        MedianPrice = Math.Round(GetMedian(filtered), 0),
+                        Count = filtered.Count
+                    };
                 });
 
             foreach (var l in list)
@@ -188,12 +195,12 @@ namespace SmartphoneMonitor.Services
 
                 if (l.StorageGB > 0 && exactModelPrices.TryGetValue(exactKey, out var exactVal) && exactVal.Count >= 2)
                 {
-                    referencePrice = exactVal.AveragePrice;
+                    referencePrice = exactVal.MedianPrice;
                     valueLabel = "модели c " + (l.StorageGB == 1024 ? "1 TB" : l.StorageGB + " GB");
                 }
                 else if (generalModelPrices.TryGetValue(generalKey, out var generalVal) && generalVal.Count >= 2)
                 {
-                    referencePrice = generalVal.AveragePrice;
+                    referencePrice = generalVal.MedianPrice;
                     valueLabel = "модели";
                 }
                 else
@@ -212,28 +219,38 @@ namespace SmartphoneMonitor.Services
                 }
 
                 l.ModelAveragePrice = referencePrice;
+                l.NetProfitMargin = l.IsStolen ? 0m : (referencePrice - (l.PriceValue + l.RepairCost));
 
                 if (referencePrice > 0m)
                 {
                     decimal priceDeviation = (referencePrice - l.PriceValue) / referencePrice * 100m;
                     l.ModelPriceDeviationPercent = Math.Round((double)priceDeviation, 1);
 
-                    // Score calculation
+                    // Score calculation v2
                     double score = 50.0;
                     score += (double)priceDeviation * 2.0;
 
+                    // Memory Size Bonus
+                    if (l.StorageGB == 256) score += 5.0;
+                    else if (l.StorageGB == 512) score += 10.0;
+                    else if (l.StorageGB >= 1024) score += 15.0;
+
+                    // Freshness
                     if (l.DaysOld == 0) score += 10.0;
                     else if (l.DaysOld == 1) score += 5.0;
                     else if (l.DaysOld > 3) score -= 5.0;
 
+                    // Views
                     if (l.Views > 0)
                     {
                         if (l.Views < 50) score += 5.0;
                         else if (l.Views > 150) score -= 5.0;
                     }
 
+                    // Urgency
                     if (l.IsUrgent) score += 5.0;
 
+                    // Battery (Apple only)
                     if (l.Brand.Equals("Apple", StringComparison.OrdinalIgnoreCase) && l.BatteryHealth > 0)
                     {
                         if (l.BatteryHealth >= 90) score += 5.0;
@@ -253,9 +270,21 @@ namespace SmartphoneMonitor.Services
                         l.PriceDisplay = $"{l.PriceValue:F0} lei";
                     }
 
+                    // Defects Penalty
+                    if (l.RepairCost > 0m)
+                    {
+                        score -= 10.0;
+                    }
+
+                    // Stolen / Lock Hard Penalty
+                    if (l.IsStolen)
+                    {
+                        score = 0.0;
+                    }
+
                     score = Math.Max(0.0, Math.Min(100.0, score));
 
-                    if (score >= 70.0 && !l.IsCommercial)
+                    if (score >= 70.0 && !l.IsCommercial && !l.IsStolen)
                     {
                         analysisResult.HotDeals.Add(new HotDeal
                         {
@@ -272,7 +301,11 @@ namespace SmartphoneMonitor.Services
                             StorageGB = l.StorageGB,
                             DaysOld = l.DaysOld,
                             PostedDate = l.PostedDate,
-                            BatteryHealth = l.BatteryHealth
+                            BatteryHealth = l.BatteryHealth,
+                            Defects = l.Defects,
+                            RepairCost = l.RepairCost,
+                            NetProfitMargin = l.NetProfitMargin,
+                            IsStolen = l.IsStolen
                         });
                     }
 
@@ -436,6 +469,138 @@ namespace SmartphoneMonitor.Services
                 text = text.Substring(1);
             }
             return text;
+        }
+
+        private static List<decimal> FilterOutliersIQR(List<decimal> prices)
+        {
+            if (prices == null || prices.Count < 4)
+            {
+                return prices ?? new List<decimal>();
+            }
+
+            var sorted = prices.OrderBy(p => p).ToList();
+            
+            decimal q1 = GetPercentile(sorted, 0.25);
+            decimal q3 = GetPercentile(sorted, 0.75);
+            decimal iqr = q3 - q1;
+
+            decimal lowLimit = q1 - 1.5m * iqr;
+            decimal highLimit = q3 + 1.5m * iqr;
+
+            return sorted.Where(p => p >= lowLimit && p <= highLimit).ToList();
+        }
+
+        private static decimal GetPercentile(List<decimal> sortedPrices, double percentile)
+        {
+            double count = sortedPrices.Count;
+            double index = percentile * (count - 1);
+            int lowIndex = (int)Math.Floor(index);
+            int highIndex = (int)Math.Ceiling(index);
+            
+            if (lowIndex == highIndex)
+            {
+                return sortedPrices[lowIndex];
+            }
+
+            decimal lowValue = sortedPrices[lowIndex];
+            decimal highValue = sortedPrices[highIndex];
+            decimal weight = (decimal)(index - lowIndex);
+
+            return lowValue + weight * (highValue - lowValue);
+        }
+
+        private static decimal GetMedian(List<decimal> sortedPrices)
+        {
+            if (sortedPrices == null || sortedPrices.Count == 0) return 0m;
+            int count = sortedPrices.Count;
+            int mid = count / 2;
+            if (count % 2 == 0)
+            {
+                return (sortedPrices[mid - 1] + sortedPrices[mid]) / 2m;
+            }
+            return sortedPrices[mid];
+        }
+
+        public static (List<string> defects, decimal repairCost, bool isStolen) DetectDefectsAndEstimateRepair(string title, string description, string brand, string model, int batteryHealth)
+        {
+            var defects = new List<string>();
+            decimal repairCost = 0m;
+            bool isStolen = false;
+
+            string text = (title + " " + description).ToLowerInvariant();
+
+            // 1. iCloud / MDM / Lock / Stolen checks
+            if (Regex.IsMatch(text, @"\b(icloud|блокировк|заблокир|mdm|activation lock|bypass|активац|на запчаст|запчаст|piese)\b"))
+            {
+                defects.Add("Блокировка / На запчасти");
+                isStolen = true;
+            }
+
+            // 2. Screen cracks / damage
+            if (Regex.IsMatch(text, @"\b(разбит|трещин|битый|скол|broken|cracked|spart|fisur|crăpat|crapat|ecran spart)\b") && 
+                !Regex.IsMatch(text, @"\b(пленк|стекл.*защит|стекло защит|защитн.*стекл|pelicul|sticla.*prot)\b"))
+            {
+                defects.Add("Разбит экран / стекло");
+                decimal screenCost = 1500m;
+                if (brand.Equals("Apple", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (model.Contains("Pro") || model.Contains("Max"))
+                    {
+                        screenCost = 2500m;
+                    }
+                }
+                else
+                {
+                    if (model.Contains("Ultra") || model.Contains("Fold") || model.Contains("Flip") || model.Contains("S20") || model.Contains("S21") || model.Contains("S22") || model.Contains("S23") || model.Contains("S24"))
+                    {
+                        screenCost = 2000m;
+                    }
+                    else
+                    {
+                        screenCost = 1000m;
+                    }
+                }
+                repairCost += screenCost;
+            }
+
+            // 3. FaceID / TouchID / Sensors
+            if (Regex.IsMatch(text, @"\b(faceid|face id|touchid|touch id|отпечат|сканер|распознаван)\b") && 
+                Regex.IsMatch(text, @"\b(не.*работ|ошибк|defect|неактив|не актив|nu func|nu luc)\b"))
+            {
+                defects.Add("Не работает FaceID/TouchID");
+                repairCost += 800m;
+            }
+
+            // 4. Battery Health
+            if (brand.Equals("Apple", StringComparison.OrdinalIgnoreCase))
+            {
+                if (batteryHealth > 0 && batteryHealth < 80)
+                {
+                    defects.Add($"Износ АКБ ({batteryHealth}%)");
+                    repairCost += 400m;
+                }
+                else if (Regex.IsMatch(text, @"\b(менять акб|замена акб|батаре.*плох|замена батаре|акб.*сервис)\b"))
+                {
+                    defects.Add("Сервис АКБ / Требуется замена");
+                    repairCost += 400m;
+                }
+            }
+
+            // 5. Back glass / cover damage
+            if (Regex.IsMatch(text, @"\b(задн.*крышк|задн.*стекл|корпус.*разбит|capac spate|sticla spate)\b"))
+            {
+                defects.Add("Разбито заднее стекло / крышка");
+                repairCost += 500m;
+            }
+
+            // 6. Camera issues
+            if (Regex.IsMatch(text, @"\b(камер.*не.*работ|камер.*разбит|пятн.*камер|линз.*разбит|focus.*не|фокус.*не)\b"))
+            {
+                defects.Add("Дефект камеры");
+                repairCost += 600m;
+            }
+
+            return (defects, repairCost, isStolen);
         }
     }
 }

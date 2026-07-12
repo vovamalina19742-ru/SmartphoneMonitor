@@ -69,5 +69,34 @@ namespace SmartphoneMonitor.Models
                 return "";
             }
         }
+
+        public System.Collections.Generic.List<string> Defects { get; set; } = new System.Collections.Generic.List<string>();
+        public decimal RepairCost { get; set; }
+        public decimal NetProfitMargin { get; set; }
+        public bool IsStolen { get; set; }
+
+        public string DefectsLabel
+        {
+            get
+            {
+                if (Defects == null || Defects.Count == 0)
+                {
+                    return string.Empty;
+                }
+                return "🔧 " + string.Join(", ", Defects) + (RepairCost > 0m ? $" (+{RepairCost:F0} MDL ремонт)" : "");
+            }
+        }
+
+        public string MarginLabel
+        {
+            get
+            {
+                if (NetProfitMargin <= 0m)
+                {
+                    return string.Empty;
+                }
+                return $"💸 Маржа: +{NetProfitMargin:F0} MDL";
+            }
+        }
     }
 }
