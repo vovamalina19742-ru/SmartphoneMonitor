@@ -8,324 +8,392 @@ namespace SmartphoneMonitor.Services
 {
     public class DataAnalysisService
     {
-        private static readonly string[] AppleModels = new string[32]
-        {
-            "15 pro max", "15 pro", "15 plus", "15", "14 pro max", "14 pro", "14 plus", "14", "13 pro max", "13 pro",
-            "13 mini", "13", "12 pro max", "12 pro", "12 mini", "12", "11 pro max", "11 pro", "11", "xs max",
-            "xs", "xr", "x", "se 2022", "se 2020", "se 3", "se 2", "se", "8 plus", "8",
-            "7 plus", "7"
-        };
+        private readonly ListingEvaluationService _evaluationService;
+        private readonly Serilog.ILogger _logger = Serilog.Log.Logger;
+        private readonly MetricsService _metricsService;
+        private readonly ModelParserService _modelParserService;
+        private readonly RetailPromoService _retailPromoService;
 
-        private static readonly string[] SamsungModels = new string[56]
-        {
-            "s24 ultra", "s24+", "s24", "s23 ultra", "s23+", "s23", "s22 ultra", "s22+", "s22", "s21 ultra",
-            "s21 fe", "s21+", "s21", "s20 fe", "s20 ultra", "s20+", "s20", "note 20 ultra", "note 20", "note 10+",
-            "note 10", "note 9", "a54", "a34", "a24", "a14", "a53", "a33", "a23", "a13",
-            "a52s", "a52", "a72", "a32", "a22", "a12", "a51", "a71", "a31", "a21s",
-            "a50", "a70", "a30", "a40", "a10", "a05", "a04", "a03", "m12", "m21",
-            "m31", "m51", "m32", "m52", "z fold", "z flip"
-        };
+        // New extracted services
+        private readonly ClassificationService _classificationService;
+        private readonly ChronicSellerService _chronicSellerService;
+        private readonly PriceAnalysisService _priceAnalysisService;
+        private readonly MatchingClientService _matchingClient = new MatchingClientService();
 
-        private static readonly string[] XiaomiModels = new string[35]
-        {
-            "note 13 pro+", "note 13 pro", "note 13", "note 12 pro", "note 12", "note 11 pro", "note 11", "note 10 pro", "note 10s", "note 10",
-            "note 9 pro", "note 9s", "note 9", "note 8 pro", "note 8", "13c", "12c", "10c", "9c", "12",
-            "10", "9", "poco x6 pro", "poco x6", "poco x5 pro", "poco x5", "poco x4 pro", "poco x3 pro", "poco x3 nfc", "poco x3",
-            "poco f5", "poco f4", "poco m5s", "poco m5", "poco m4"
-        };
+        // Default constructor for legacy callers (uses new instances)
+        public DataAnalysisService() : this(new MetricsService(new MetricsRepository())) { }
 
-        private static readonly string[] GoogleModels = new string[14]
-        {
-            "pixel 8 pro", "pixel 8a", "pixel 8", "pixel 7 pro", "pixel 7a", "pixel 7", "pixel 6 pro", "pixel 6a", "pixel 6", "pixel 5a",
-            "pixel 5", "pixel 4a", "pixel 4 xl", "pixel 4"
-        };
+        public DataAnalysisService(MetricsService metricsService) : this(metricsService, new RetailPromoService()) { }
 
-        public AnalysisResult Analyze(List<Listing> listings, List<string> blacklist, Dictionary<string, decimal>? priceHistory = null)
+        public DataAnalysisService(MetricsService metricsService, RetailPromoService retailPromoService)
+        {
+            _metricsService = metricsService ?? throw new ArgumentNullException(nameof(metricsService));
+            _retailPromoService = retailPromoService ?? throw new ArgumentNullException(nameof(retailPromoService));
+            _evaluationService = new ListingEvaluationService();
+            _modelParserService = new ModelParserService();
+
+            // Initialize new extracted services
+            _classificationService = new ClassificationService();
+            _chronicSellerService = new ChronicSellerService();
+            _priceAnalysisService = new PriceAnalysisService();
+        }
+
+        /// <summary>
+        /// Full DI constructor — enables price trends via DB.
+        /// </summary>
+        public DataAnalysisService(MetricsService metricsService, RetailPromoService retailPromoService, DatabaseService databaseService)
+        {
+            _metricsService = metricsService ?? throw new ArgumentNullException(nameof(metricsService));
+            _retailPromoService = retailPromoService ?? throw new ArgumentNullException(nameof(retailPromoService));
+            _evaluationService = new ListingEvaluationService();
+            _modelParserService = new ModelParserService();
+            _classificationService = new ClassificationService();
+            _chronicSellerService = new ChronicSellerService();
+            _priceAnalysisService = new PriceAnalysisService(databaseService);
+        }
+
+        public AnalysisResult Analyze(List<Listing> listings, List<string> blacklist, List<string> blacklistLogins, Dictionary<string, decimal>? priceHistory = null)
         {
             var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+
+            // Сброс статуса соединения для новой попытки подключения
+            MatchingClientService.Reset();
+
+            // Подсчет плотности предложений для каждой модели (спрос/предложение)
+            var modelSupplyCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            foreach (var l in listings)
+            {
+                if (!string.IsNullOrEmpty(l.Model))
+                {
+                    if (!modelSupplyCounts.TryGetValue(l.Model, out var count)) count = 0;
+                    modelSupplyCounts[l.Model] = count + 1;
+                }
+            }
+
             var analysisResult = new AnalysisResult
             {
                 TotalListings = listings.Count,
                 AnalysisDate = DateTime.Now
             };
 
-            var list = new List<Listing>();
-            var list2 = new List<Listing>();
-            int num = 0;
+            // Phase 1: Classify listings (commercial vs private, blacklist filtering)
+            var classificationResult = _classificationService.Classify(listings, blacklist, blacklistLogins);
+            var privateListings = classificationResult.PrivateListings;
+            var commercialListings = classificationResult.CommercialListings;
 
-            foreach (var listing in listings)
+            analysisResult.PrivateListings = privateListings.Count;
+            analysisResult.CommercialListings = commercialListings.Count;
+            analysisResult.FilteredByBlacklist = classificationResult.FilteredByBlacklist;
+
+            // Phase 2: Detect chronic sellers
+            analysisResult.ChronicSellers = _chronicSellerService.Detect(listings);
+
+            // Phase 3: Price analysis (brand stats, model reference prices)
+            var retailPromoMap = _retailPromoService.LoadPromoPriceMap();
+            var priceAnalysisResult = _priceAnalysisService.Analyze(privateListings);
+
+            analysisResult.MinPrice = priceAnalysisResult.MinPrice;
+            analysisResult.MaxPrice = priceAnalysisResult.MaxPrice;
+            analysisResult.AveragePrice = priceAnalysisResult.AveragePrice;
+            analysisResult.MedianPrice = priceAnalysisResult.MedianPrice;
+            analysisResult.BrandStats = priceAnalysisResult.BrandStats;
+            analysisResult.ListingsConsidered = priceAnalysisResult.ListingsConsidered;
+            analysisResult.PriceBuckets = priceAnalysisResult.PriceBuckets;
+            analysisResult.BrandTrends = priceAnalysisResult.BrandTrends;
+
+            // Phase 4: Extract models, battery health, defects
+            foreach (var listing in privateListings)
             {
-                string allText = (listing.Title + " " + listing.Description).ToLowerInvariant();
-                bool flag = listing.IsCommercial || listing.SellerType == "Shop" || Constants.CommercialMarkers.Any((string m) => allText.Contains(m, StringComparison.OrdinalIgnoreCase));
-                
-                string phone = NormalizePhone(listing.PhoneNumber);
-                if (!string.IsNullOrEmpty(phone) && blacklist.Any((string b) => NormalizePhone(b) == phone))
-                {
-                    flag = true;
-                    num++;
-                }
-
-                listing.IsCommercial = flag;
-                listing.IsUrgent = Constants.UrgencyMarkers.Any((string m) => allText.Contains(m, StringComparison.OrdinalIgnoreCase));
-                
-                if (flag)
-                {
-                    list2.Add(listing);
-                }
-                else
-                {
-                    list.Add(listing);
-                }
-            }
-
-            analysisResult.PrivateListings = list.Count;
-            analysisResult.CommercialListings = list2.Count;
-            analysisResult.FilteredByBlacklist = num;
-
-            // Chronic sellers
-            var chronicGroups = from listing in listings
-                                where !string.IsNullOrEmpty(listing.PhoneNumber)
-                                group listing by NormalizePhone(listing.PhoneNumber) into g
-                                where g.Count() >= 3
-                                select g;
-
-            foreach (var group in chronicGroups)
-            {
-                int uniqueBrands = group.Select((Listing l) => l.Brand).Distinct().Count();
-                analysisResult.ChronicSellers.Add(new ChronicSeller
-                {
-                    PhoneNumber = group.Key,
-                    SellerName = group.First().SellerName,
-                    ListingCount = group.Count(),
-                    UniqueBrands = uniqueBrands,
-                    Reason = uniqueBrands >= 3 
-                        ? $"Продаёт {uniqueBrands} разных бренда(ов), {group.Count()} объявлений" 
-                        : $"Хронический продавец: {group.Count()} объявлений"
-                });
-            }
-
-            // Calculations
-            var priceRangeList = (from listing in list
-                                  where listing.PriceValue >= 1000m && listing.PriceValue <= 5000m
-                                  orderby listing.PriceValue
-                                  select listing).ToList();
-
-            if (priceRangeList.Count > 0)
-            {
-                analysisResult.MinPrice = priceRangeList.First().PriceValue;
-                analysisResult.MaxPrice = priceRangeList.Last().PriceValue;
-                analysisResult.AveragePrice = Math.Round(priceRangeList.Average((Listing l) => l.PriceValue), 0);
-                int midIndex = priceRangeList.Count / 2;
-                analysisResult.MedianPrice = priceRangeList.Count % 2 == 0 
-                    ? (priceRangeList[midIndex - 1].PriceValue + priceRangeList[midIndex].PriceValue) / 2m 
-                    : priceRangeList[midIndex].PriceValue;
-            }
-
-            int validPriceCount = list.Count((Listing l) => l.PriceValue >= 1000m && l.PriceValue <= 5000m);
-
-            var brandGroups = from listing in list
-                              where listing.PriceValue >= 1000m && listing.PriceValue <= 5000m
-                              group listing by listing.Brand into g
-                              orderby g.Count() descending
-                              select g;
-
-            foreach (var group in brandGroups)
-            {
-                var sorted = group.OrderBy((Listing l) => l.PriceValue).ToList();
-                var prices = sorted.Select(l => l.PriceValue).ToList();
-                var filteredPrices = FilterOutliersIQR(prices);
-                
-                decimal medianPrice = GetMedian(filteredPrices);
-
-                analysisResult.BrandStats.Add(new BrandStat
-                {
-                    Brand = group.Key,
-                    Count = group.Count(),
-                    Percent = Math.Round((double)group.Count() * 100.0 / validPriceCount, 1),
-                    MinPrice = filteredPrices.Count > 0 ? filteredPrices.First() : (sorted.Count > 0 ? sorted.First().PriceValue : 0m),
-                    MaxPrice = filteredPrices.Count > 0 ? filteredPrices.Last() : (sorted.Count > 0 ? sorted.Last().PriceValue : 0m),
-                    MedianPrice = medianPrice
-                });
-            }
-
-            // Extract models, battery health, and defects
-            foreach (var listing in list)
-            {
-                listing.Model = ExtractModel(listing.Title, listing.Brand);
+                listing.Model = _modelParserService.ExtractModel(listing.Title, listing.Brand, useSemantic: true);
                 listing.BatteryHealth = ExtractBatteryHealth(listing.Title, listing.Description, listing.Brand);
 
                 var defectResult = DetectDefectsAndEstimateRepair(listing.Title, listing.Description, listing.Brand, listing.Model, listing.BatteryHealth);
                 listing.Defects = defectResult.defects;
                 listing.RepairCost = defectResult.repairCost;
                 listing.IsStolen = defectResult.isStolen;
+                listing.HasCriticalDefect = defectResult.isCritical;
             }
 
-            // Deviation calculation groups with IQR-filtered Medians
-            var exactModelPrices = list
-                .Where(listing => listing.PriceValue >= 1000m && listing.PriceValue <= 5000m)
-                .GroupBy(listing => new { listing.Brand, listing.Model, listing.StorageGB })
-                .ToDictionary(g => g.Key, g => {
-                    var prices = g.Select(l => l.PriceValue).ToList();
-                    var filtered = FilterOutliersIQR(prices);
-                    return new {
-                        MedianPrice = Math.Round(GetMedian(filtered), 0),
-                        Count = filtered.Count
-                    };
-                });
+            // Phase 5: Evaluate each listing (reference price, deviation, promo, hot deals)
+            int promoMatches = 0;
+            var promoMatchesByBrand = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
 
-            var generalModelPrices = list
-                .Where(listing => listing.PriceValue >= 1000m && listing.PriceValue <= 5000m)
-                .GroupBy(listing => new { listing.Brand, listing.Model })
-                .ToDictionary(g => g.Key, g => {
-                    var prices = g.Select(l => l.PriceValue).ToList();
-                    var filtered = FilterOutliersIQR(prices);
-                    return new {
-                        MedianPrice = Math.Round(GetMedian(filtered), 0),
-                        Count = filtered.Count
-                    };
-                });
-
-            foreach (var l in list)
+            foreach (var l in privateListings)
             {
                 decimal referencePrice = 0m;
                 string valueLabel = "";
 
-                var exactKey = new { l.Brand, l.Model, l.StorageGB };
-                var generalKey = new { l.Brand, l.Model };
+                var exactKey = new ExactModelKey { Brand = l.Brand, Model = l.Model, StorageGB = l.StorageGB, IsNew = l.IsNew };
+                var generalKey = new GeneralModelKey { Brand = l.Brand, Model = l.Model, IsNew = l.IsNew };
 
-                if (l.StorageGB > 0 && exactModelPrices.TryGetValue(exactKey, out var exactVal) && exactVal.Count >= 2)
+                string condLabel = l.IsNew ? "новых" : "б/у";
+
+                if (l.StorageGB > 0 && priceAnalysisResult.ExactModelPrices.TryGetValue(exactKey, out var exactVal) && exactVal.Count >= 2)
                 {
                     referencePrice = exactVal.MedianPrice;
-                    valueLabel = "модели c " + (l.StorageGB == 1024 ? "1 TB" : l.StorageGB + " GB");
+                    valueLabel = $"{condLabel} моделей c " + (l.StorageGB == 1024 ? "1 TB" : l.StorageGB + " GB");
                 }
-                else if (generalModelPrices.TryGetValue(generalKey, out var generalVal) && generalVal.Count >= 2)
+                else if (priceAnalysisResult.GeneralModelPrices.TryGetValue(generalKey, out var generalVal) && generalVal.Count >= 2)
                 {
                     referencePrice = generalVal.MedianPrice;
-                    valueLabel = "модели";
+                    valueLabel = $"{condLabel} моделей";
                 }
                 else
                 {
-                    var brandStat = analysisResult.BrandStats.FirstOrDefault((BrandStat b) => b.Brand == l.Brand);
-                    if (brandStat != null && brandStat.Count >= 3)
+                    var baselineInfo = ModelPriceBaselineService.GetBaseline(l.Brand, l.Model, l.StorageGB);
+                    if (baselineInfo != null)
                     {
-                        referencePrice = brandStat.MedianPrice;
-                        valueLabel = "бренда";
+                        referencePrice = baselineInfo.BaselinePrice;
+                        valueLabel = $"базовых {condLabel} ({baselineInfo.ModelGroup})";
                     }
                     else
                     {
-                        referencePrice = analysisResult.MedianPrice;
-                        valueLabel = "рынка";
+                        var brandStat = analysisResult.BrandStats.FirstOrDefault(b => b.Brand == l.Brand);
+                        if (brandStat != null && brandStat.Count >= 3)
+                        {
+                            referencePrice = Math.Min(brandStat.MedianPrice, 2000m);
+                            valueLabel = $"брендовых {condLabel}";
+                        }
+                        else
+                        {
+                            referencePrice = Math.Min(analysisResult.MedianPrice, 1800m);
+                            valueLabel = $"общерыночных {condLabel}";
+                        }
                     }
                 }
 
                 l.ModelAveragePrice = referencePrice;
-                l.NetProfitMargin = l.IsStolen ? 0m : (referencePrice - (l.PriceValue + l.RepairCost));
+                
+                // Оценка дефицита модели на рынке (спрос/предложение)
+                double scarcityMultiplier = 1.0;
+                int supplyCount = 0;
+                if (!string.IsNullOrEmpty(l.Model) && modelSupplyCounts.TryGetValue(l.Model, out supplyCount))
+                {
+                    if (supplyCount <= 3) // Дефицитная модель
+                    {
+                        scarcityMultiplier = 1.03; // Наценка +3%
+                    }
+                    else if (supplyCount >= 15) // Перенасыщенный рынок
+                    {
+                        scarcityMultiplier = 0.97; // Скидка -3% для быстрого сбыта
+                    }
+                }
+
+                // Рекомендуемая цена продажи с учетом дефицита
+                decimal baseResellPrice = referencePrice * (decimal)scarcityMultiplier;
+
+                // Применяем Charm Pricing (психологическое округление)
+                bool isPremium = baseResellPrice >= 15000m || (l.Brand != null && l.Brand.Equals("Apple", StringComparison.OrdinalIgnoreCase));
+                l.RecommendedResellPrice = CharmPricingService.ApplyCharmPricing(baseResellPrice, isPremium);
+
+                // Рассчитываем чистую маржу на основе RecommendedResellPrice
+                l.NetProfitMargin = l.IsStolen ? 0m : (l.RecommendedResellPrice - (l.PriceValue + l.RepairCost));
 
                 if (referencePrice > 0m)
                 {
                     decimal priceDeviation = (referencePrice - l.PriceValue) / referencePrice * 100m;
                     l.ModelPriceDeviationPercent = Math.Round((double)priceDeviation, 1);
 
-                    // Score calculation v2
-                    double score = 50.0;
-                    score += (double)priceDeviation * 2.0;
-
-                    // Memory Size Bonus
-                    if (l.StorageGB == 256) score += 5.0;
-                    else if (l.StorageGB == 512) score += 10.0;
-                    else if (l.StorageGB >= 1024) score += 15.0;
-
-                    // Freshness
-                    if (l.DaysOld == 0) score += 10.0;
-                    else if (l.DaysOld == 1) score += 5.0;
-                    else if (l.DaysOld > 3) score -= 5.0;
-
-                    // Views
-                    if (l.Views > 0)
+                    // metric: check if a promo exists for this listing
+                    try
                     {
-                        if (l.Views < 50) score += 5.0;
-                        else if (l.Views > 150) score -= 5.0;
+                        var promo = _evaluationService.GetBestPromo(l, retailPromoMap);
+                        if (promo != null)
+                        {
+                            l.RetailPrice = promo.Price;
+                            l.RetailShopName = promo.Shop;
+                            l.RetailSavings = promo.Price - l.PriceValue;
+                            l.RetailSavingsPercent = promo.Price > 0 ? (double)((promo.Price - l.PriceValue) / promo.Price * 100m) : 0.0;
+
+                            promoMatches++;
+                            if (!string.IsNullOrEmpty(l.Brand))
+                            {
+                                if (!promoMatchesByBrand.TryGetValue(l.Brand, out var bcount)) bcount = 0;
+                                promoMatchesByBrand[l.Brand] = bcount + 1;
+                                try
+                                {
+                                    var brandNorm = PromoKeyHelper.SanitizePrefix(l.Brand).TrimEnd('_');
+                                    _metricsService.Increment($"promo_matches_brand_{brandNorm}", 1);
+                                }
+                                catch { }
+                            }
+                        }
                     }
+                    catch { }
 
-                    // Urgency
-                    if (l.IsUrgent) score += 5.0;
+                    double score = _evaluationService.EvaluateScore(l, priceDeviation, referencePrice, retailPromoMap, priceHistory);
+                    _evaluationService.ApplyComparisonText(l, priceDeviation, valueLabel, retailPromoMap);
 
-                    // Battery (Apple only)
-                    if (l.Brand.Equals("Apple", StringComparison.OrdinalIgnoreCase) && l.BatteryHealth > 0)
-                    {
-                        if (l.BatteryHealth >= 90) score += 5.0;
-                        else if (l.BatteryHealth < 80 && l.BatteryHealth >= 75) score -= 15.0;
-                        else if (l.BatteryHealth < 75) score -= 25.0;
-                    }
+                    // Валидация цены через локальный шлюз безопасности (Python API)
+                    var validationResult = _matchingClient.ValidatePriceAsync(
+                        referencePrice,
+                        referencePrice * 0.70m, // Условная себестоимость (30% ниже рынка)
+                        referencePrice,
+                        l.PriceValue
+                    ).GetAwaiter().GetResult();
 
-                    // Price drop check
-                    if (priceHistory != null && priceHistory.TryGetValue(l.Url, out decimal prevPrice) && l.PriceValue < prevPrice)
-                    {
-                        score += 10.0;
-                        decimal drop = prevPrice - l.PriceValue;
-                        l.PriceDisplay = $"{l.PriceValue:F0} lei (📉 -{drop:F0} л)";
-                    }
-                    else
-                    {
-                        l.PriceDisplay = $"{l.PriceValue:F0} lei";
-                    }
+                    // Sanity Check: завышенные скидки (>40%) для старых бюджетных моделей требуют ручной проверки
+                    var baselineCheck = ModelPriceBaselineService.GetBaseline(l.Brand, l.Model, l.StorageGB);
+                    bool isLegacyBudgetModel = baselineCheck?.IsLegacyBudget ?? false;
+                    bool requiresManualReview = priceDeviation >= 40m && (isLegacyBudgetModel || !priceAnalysisResult.ExactModelPrices.ContainsKey(exactKey));
 
-                    // Defects Penalty
-                    if (l.RepairCost > 0m)
+                    if (ListingClassifier.IsBuyAd(l.Title, l.Description))
                     {
-                        score -= 10.0;
-                    }
-
-                    // Stolen / Lock Hard Penalty
-                    if (l.IsStolen)
-                    {
+                        l.ComparisonText = "⛔ Скупка / Покупка";
+                        l.ComparisonColor = "#8E8E93";
+                        l.ComparisonBg = "#F2F2F7";
                         score = 0.0;
                     }
-
-                    score = Math.Max(0.0, Math.Min(100.0, score));
-
-                    if (score >= 70.0 && !l.IsCommercial && !l.IsStolen)
+                    else if (ListingClassifier.IsFeatureOrRetroPhone(l.Title, l.Brand))
                     {
-                        analysisResult.HotDeals.Add(new HotDeal
-                        {
-                            RecommendationScore = score,
-                            Title = $"⭐ [Рекомендация: {score:F0}/100] " + l.Title,
-                            Brand = l.Brand,
-                            PriceValue = l.PriceValue,
-                            BrandMedian = referencePrice,
-                            DiscountPercent = Math.Round((double)priceDeviation, 1),
-                            Url = l.Url,
-                            PhoneNumber = l.PhoneNumber,
-                            SellerName = l.SellerName,
-                            Views = l.Views,
-                            StorageGB = l.StorageGB,
-                            DaysOld = l.DaysOld,
-                            PostedDate = l.PostedDate,
-                            BatteryHealth = l.BatteryHealth,
-                            Defects = l.Defects,
-                            RepairCost = l.RepairCost,
-                            NetProfitMargin = l.NetProfitMargin,
-                            IsStolen = l.IsStolen
-                        });
+                        l.ComparisonText = "⛔ Кнопочный / Ретро";
+                        l.ComparisonColor = "#8E8E93";
+                        l.ComparisonBg = "#F2F2F7";
+                        score = 0.0;
+                    }
+                    else if (ListingClassifier.IsAppleOrIPhone(l.Title, l.Brand))
+                    {
+                        l.ComparisonText = "⚠️ Исключено: iPhone";
+                        l.ComparisonColor = "#8E8E93";
+                        l.ComparisonBg = "#F2F2F7";
+                        score = 0.0;
+                    }
+                    else if (requiresManualReview)
+                    {
+                        l.ComparisonText = "⚠️ Требует ручной проверки рыночной цены";
+                        l.ComparisonColor = "#E65100"; // Оранжевый цвет предупреждения
+                        l.ComparisonBg = "#FFF3E0";    // Бледный оранжевый фон
+                        score = Math.Min(score, 45.0); // Ограничиваем балл, чтобы не было ложной "Горячей сделки"
+                    }
+                    else if (validationResult != null && !validationResult.Value.IsValid)
+                    {
+                        l.ComparisonText = "⚠️ " + validationResult.Value.WarningMessage;
+                        l.ComparisonColor = "#FF3B30"; // Красный цвет ошибки
+                        l.ComparisonBg = "#FFE5E5";    // Бледный красный фон
+                        score = 0.0; // Аннулируем оценку, чтобы не попало в "Горячие сделки"
                     }
 
-                    if (priceDeviation >= 5m)
+                    // Генерируем цепочку рассуждений ИИ-агента (Рассуждения Совета Комитетов)
+                    var reasoning = new System.Text.StringBuilder();
+                    reasoning.AppendLine("🏛️ ВЕРДИКТ СОВЕТА ИИ-КОМИТЕТОВ (ИИ-СУДЬЯ: СКТЕПТИК-ПЕРЕКУПЩИК):");
+                    reasoning.AppendLine("────────────────────────────────────────");
+                    reasoning.AppendLine("🧠 ИНСТРУКЦИЯ ИИ-СУДЬИ:");
+                    reasoning.AppendLine("«Ты — циничный и опытный перекупщик смартфонов. По умолчанию каждое объявление — это обычная рядовая цена. Твоя задача — найти подвох, проверить возраст устройства и доказать, что выгоды нет. Если устройство старое (например, Redmi 9), цена в 1000 лей — это нормальный рынок, а не аномальная скидка. Не ставь высокий приоритет и статус 'Горячая сделка', если нет железобетонных доказательств реальной перекупщицкой маржи.»");
+                    reasoning.AppendLine();
+
+                    if (isLegacyBudgetModel)
                     {
-                        l.ComparisonText = $"Дешевле {valueLabel} на {Math.Abs(priceDeviation):F0}%";
-                        l.ComparisonColor = "#2E7D32";
-                        l.ComparisonBg = "#E8F5E9";
+                        reasoning.AppendLine("[ПРЕДУПРЕЖДЕНИЕ: Устаревшее бюджетное устройство. Цена в районе 1000 лей для него — это нормальный рынок, а не аномальная скидка]");
+                        reasoning.AppendLine();
                     }
-                    else if (priceDeviation <= -5m)
+
+                    reasoning.AppendLine("🔍 КОМИТЕТ РАЗВЕДКИ И НОРМАЛИЗАЦИИ:");
+                    reasoning.AppendLine($"• Модель: {l.Brand} {l.Model} ({(l.StorageGB > 0 ? l.StorageGB + " GB" : "N/A")}, {(l.IsNew ? "новый" : "б/у")})");
+                    reasoning.AppendLine($"• Классификация источника: {l.CategoryBadgeText} ({l.SellerType})");
+
+                    reasoning.AppendLine();
+                    reasoning.AppendLine($"🏷️ СТРАТЕГИЯ ОЦЕНКИ ПО КАТЕГОРИИ ПРОДАВЦА ({l.CategoryBadgeText}):");
+                    switch (l.NewSmartphoneCategory)
                     {
-                        l.ComparisonText = $"Дороже {valueLabel} на {Math.Abs(priceDeviation):F0}%";
-                        l.ComparisonColor = "#C62828";
-                        l.ComparisonBg = "#FFEBEE";
+                        case "RetailChain":
+                            reasoning.AppendLine("• Регламент ИИ: Крупный официальный ритейл. Оценивать честность промо-скидки относительно базовой цены. Учитывать 24 мес. гарантии.");
+                            break;
+                        case "Shop999":
+                            reasoning.AppendLine($"• Регламент ИИ: Магазин 999.md / Импорт. Сравнивать цену с крупным ритейлом (~{referencePrice * 1.15m:F0} MDL). Зафиксировать маржу выгоды ({referencePrice * 1.15m - l.PriceValue:F0} MDL).");
+                            break;
+                        case "PrivateNew":
+                            reasoning.AppendLine("• Регламент ИИ: Частник (Новый/Запечатанный). Проверять наличие упаковки/пломб, чека и дисконт относительно магазинов.");
+                            break;
+                        default:
+                            reasoning.AppendLine("• Регламент ИИ: Б/у смартфон от частного продавца. Проверять износ, дефекты и реальную выгоду.");
+                            break;
+                    }
+
+                    reasoning.AppendLine();
+                    reasoning.AppendLine("💸 КОМИТЕТ ФИНАНСОВОЙ ОЦЕНКИ (ФАКТЫ):");
+                    decimal priceRangeLow = Math.Round(referencePrice * 0.85m);
+                    decimal priceRangeHigh = Math.Round(referencePrice * 1.15m);
+                    reasoning.AppendLine($"• Цена продавца: {l.PriceValue:F0} MDL");
+                    reasoning.AppendLine($"• Реальный ценовой диапазон модели на рынке: {priceRangeLow:F0}–{priceRangeHigh:F0} MDL (Ориентир медианы: {referencePrice:F0} MDL)");
+                    reasoning.AppendLine($"• Абсолютная выгода к базовой медиане: {referencePrice - l.PriceValue:F0} MDL");
+                    
+                    if (scarcityMultiplier > 1.0)
+                    {
+                        reasoning.AppendLine($"• Спрос/Предложение: Дефицит модели ({supplyCount} объявлений). Наценка +3%.");
+                    }
+                    else if (scarcityMultiplier < 1.0)
+                    {
+                        reasoning.AppendLine($"• Спрос/Предложение: Избыток предложений ({supplyCount} объявлений). Скидка -3%.");
                     }
                     else
                     {
-                        l.ComparisonText = $"Около {valueLabel} ({((priceDeviation >= 0m) ? "-" : "+")}{Math.Abs(priceDeviation):F0}%)";
-                        l.ComparisonColor = "#455A64";
-                        l.ComparisonBg = "#ECEFF1";
+                        reasoning.AppendLine($"• Спрос/Предложение: Стабильный спрос ({supplyCount} объявлений).");
+                    }
+                    reasoning.AppendLine($"• Оценка: Рекомендация к перепродаже: {l.RecommendedResellPrice:F0} MDL (Чистая маржа: {l.NetProfitMargin:F0} MDL)");
+
+                    reasoning.AppendLine();
+                    reasoning.AppendLine("⚠️ КОМИТЕТ РИСКОВ И ДЕФЕКТОВ:");
+                    reasoning.AppendLine($"• Здоровье батареи (АКБ): {(l.BatteryHealth > 0 ? l.BatteryHealth + "%" : "Не указано / Не применимо")}");
+                    reasoning.AppendLine($"• Обнаружено дефектов: {(l.Defects.Count > 0 ? l.Defects.Count.ToString() : "Нет")}");
+                    if (l.RepairCost > 0m)
+                    {
+                        reasoning.AppendLine($"• Стоимость ремонта: {l.RepairCost:F0} MDL");
+                    }
+                    reasoning.AppendLine($"• Сигнал кражи / Неоригинал: {(l.IsStolen ? "КРИТИЧЕСКИЙ (Найдены маркеры)" : "Чисто")}");
+                    reasoning.AppendLine($"• Критический износ: {(l.HasCriticalDefect ? "Да (Экран бит / не включается)" : "Нет")}");
+
+                    var osService = new XiaomiOsSupportService();
+                    var osSupport = osService.AnalyzeModel(l.Title);
+                    if (osSupport.IsXiaomiDevice)
+                    {
+                        reasoning.AppendLine();
+                        reasoning.AppendLine("🤖 АНАЛИЗ ПОДДЕРЖКИ ОС:");
+                        reasoning.AppendLine($"• {osSupport.OsStatusSummary}");
+                    }
+
+                    reasoning.AppendLine();
+                    reasoning.AppendLine("⚖️ ПРЕЗИДИУМ ПРИНЯТИЯ РЕШЕНИЙ (АРБИТР):");
+                    string verdict = "Рядовая цена (Нет сверхприбыли)";
+                    string recommendation = "Обычная рыночная цена. Перепродажа малоэффективна.";
+                    if (l.IsStolen)
+                    {
+                        verdict = "🚨 ЭКСТРЕМАЛЬНЫЙ РИСК (Возможно краденый / Заблокирован)";
+                        recommendation = "Покупка категорически не рекомендуется.";
+                    }
+                    else if (requiresManualReview)
+                    {
+                        verdict = "⚠️ ТРЕБУЕТ РУЧНОЙ ПРОВЕРКИ РЫНОЧНОЙ ЦЕНЫ";
+                        recommendation = "Модель старая/бюджетная или скидка аномальная. Обязательна ручная проверка перед покупкой.";
+                    }
+                    else if (l.HasCriticalDefect || (score <= 40.0 && l.Defects.Count > 0))
+                    {
+                        verdict = "🔴 БРАК / ОТКЛОНЕНО (Дефект железа / Дрова)";
+                        recommendation = "Критический дефект (потекшая матрица/битый экран/дефекты). Ремонт съест всю выгоду. Не брать!";
+                        score = Math.Min(score, 25.0);
+                    }
+                    else if (l.Defects.Count > 0)
+                    {
+                        verdict = "⚠️ СПОРНАЯ СДЕЛКА (Имеются дефекты)";
+                        recommendation = "Покупать только под ремонт или на запчасти с учетом большого торга.";
+                    }
+                    else if (l.NetProfitMargin >= 400m && score >= 70.0 && !l.HasCriticalDefect && l.Defects.Count == 0)
+                    {
+                        verdict = "🔥 ОТЛИЧНОЕ ПРЕДЛОЖЕНИЕ (Высокий приоритет)";
+                        recommendation = "Подтвержденная высокая маржа. Покупать немедленно.";
+                    }
+                    else if (l.NetProfitMargin >= 250m && score >= 60.0 && !l.HasCriticalDefect && l.Defects.Count == 0)
+                    {
+                        verdict = "👍 ВЫГОДНАЯ СДЕЛКА (Средний приоритет)";
+                        recommendation = "Хороший вариант для перепродажи.";
+                    }
+                    reasoning.AppendLine($"• Резюме: {verdict}");
+                    reasoning.AppendLine($"• Действие: {recommendation}");
+
+                    l.AiReasoning = reasoning.ToString();
+
+                    if (HotDealBuilder.IsHotDeal(l, score))
+                    {
+                        analysisResult.HotDeals.Add(HotDealBuilder.Create(l, score, referencePrice, Math.Round((double)priceDeviation, 1)));
                     }
                 }
                 else
@@ -337,108 +405,42 @@ namespace SmartphoneMonitor.Services
                 }
             }
 
-            analysisResult.AllPrivateListings = list;
-            analysisResult.HotDeals = analysisResult.HotDeals.OrderByDescending((HotDeal h) => h.RecommendationScore).ToList();
-            
+            analysisResult.AllPrivateListings = privateListings;
+            analysisResult.HotDeals = analysisResult.HotDeals.OrderByDescending(h => h.RecommendationScore).ToList();
+
+            _logger.Information("Analysis complete: total={Total}, hotDeals={HotDeals}, promoMatches={PromoMatches}",
+                analysisResult.TotalListings, analysisResult.HotDeals.Count, promoMatches);
+            _metricsService.Increment("analysis_runs", 1);
+            _metricsService.Increment("promo_matches_total", promoMatches);
+            _metricsService.SetGauge("hotdeals_current", analysisResult.HotDeals.Count);
+            _metricsService.ObserveHistogram("analysis_duration_seconds", analysisResult.AnalysisDuration.TotalSeconds);
+
+            foreach (var kv in promoMatchesByBrand)
+            {
+                _logger.Information("Promo matches for brand {Brand}: {Count}", kv.Key, kv.Value);
+            }
+
             stopwatch.Stop();
             analysisResult.AnalysisDuration = stopwatch.Elapsed;
             return analysisResult;
         }
 
-        private static string ExtractModel(string title, string brand)
-        {
-            if (string.IsNullOrWhiteSpace(title))
-            {
-                return "Другой";
-            }
-            string text = title.ToLowerInvariant();
-            string[]? array = brand.ToLowerInvariant() switch
-            {
-                "apple" => AppleModels,
-                "samsung" => SamsungModels,
-                "xiaomi" => XiaomiModels,
-                "google" => GoogleModels,
-                _ => null
-            };
-
-            if (array != null)
-            {
-                foreach (string text2 in array)
-                {
-                    string pattern = "\\b" + Regex.Escape(text2) + "\\b";
-                    if (!Regex.IsMatch(text, pattern))
-                    {
-                        continue;
-                    }
-                    string[] array3 = text2.Split(' ');
-                    for (int j = 0; j < array3.Length; j++)
-                    {
-                        if (array3[j].Length > 0)
-                        {
-                            array3[j] = char.ToUpper(array3[j][0]) + array3[j].Substring(1);
-                        }
-                    }
-                    string text3 = string.Join(" ", array3);
-                    if (brand.Equals("apple", StringComparison.OrdinalIgnoreCase))
-                    {
-                        return "iPhone " + text3;
-                    }
-                    if (brand.Equals("samsung", StringComparison.OrdinalIgnoreCase))
-                    {
-                        return "Galaxy " + text3;
-                    }
-                    return text3;
-                }
-            }
-
-            string text4 = text;
-            string text5 = brand.ToLowerInvariant();
-            int num = text4.IndexOf(text5);
-            if (num >= 0)
-            {
-                text4 = text4.Substring(num + text5.Length).Trim();
-            }
-            text4 = Regex.Replace(text4, "\\b(telefon|smartfon|telefoane|оригинал|original)\\b", "", RegexOptions.IgnoreCase).Trim();
-            var match = Regex.Match(text4, "^([a-zA-Z0-9+-]{2,})\\s*([a-zA-Z0-9+-]{2,})?");
-            if (match.Success)
-            {
-                string value = match.Groups[1].Value;
-                string value2 = match.Groups[2].Value;
-                value = char.ToUpper(value[0]) + value.Substring(1).ToLowerInvariant();
-                if (!string.IsNullOrEmpty(value2) && value2.Length >= 2)
-                {
-                    value2 = char.ToUpper(value2[0]) + value2.Substring(1).ToLowerInvariant();
-                    return value + " " + value2;
-                }
-                return value;
-            }
-            return "Другой";
-        }
-
         private static int ExtractBatteryHealth(string title, string description, string brand)
         {
             if (!brand.Equals("Apple", StringComparison.OrdinalIgnoreCase))
-            {
                 return 0;
-            }
+
             string text = (title + " " + description).ToLowerInvariant();
-            var matches = Regex.Matches(text, @"(?:акб|battery|батаре|health|аккум|состояни|износ)\D*?(\d{2,3})\s*%?");
+            var matches = Regex.Matches(text, @"(?:акб|battery|батаре|health|аккум|состояни|износ|bateri|viata|procent)\D*?(\d{2,3})\s*%?");
             foreach (Match m in matches)
             {
                 if (int.TryParse(m.Groups[1].Value, out int val))
                 {
                     bool isWear = m.Value.Contains("износ");
-                    if (isWear)
-                    {
-                        if (val > 0 && val < 50)
-                        {
-                            val = 100 - val;
-                        }
-                    }
+                    if (isWear && val > 0 && val < 50)
+                        val = 100 - val;
                     if (val >= 50 && val <= 100)
-                    {
                         return val;
-                    }
                 }
             }
 
@@ -446,161 +448,127 @@ namespace SmartphoneMonitor.Services
             foreach (Match m in percentMatches)
             {
                 if (int.TryParse(m.Groups[1].Value, out int val) && val >= 50 && val <= 100)
-                {
                     return val;
-                }
             }
             return 0;
         }
 
-        public static string NormalizePhone(string? phone)
-        {
-            if (string.IsNullOrEmpty(phone))
-            {
-                return string.Empty;
-            }
-            string text = Regex.Replace(phone, "[^\\d]", "");
-            if (text.StartsWith("373"))
-            {
-                text = text.Substring(3);
-            }
-            if (text.StartsWith("0"))
-            {
-                text = text.Substring(1);
-            }
-            return text;
-        }
-
-        private static List<decimal> FilterOutliersIQR(List<decimal> prices)
-        {
-            if (prices == null || prices.Count < 4)
-            {
-                return prices ?? new List<decimal>();
-            }
-
-            var sorted = prices.OrderBy(p => p).ToList();
-            
-            decimal q1 = GetPercentile(sorted, 0.25);
-            decimal q3 = GetPercentile(sorted, 0.75);
-            decimal iqr = q3 - q1;
-
-            decimal lowLimit = q1 - 1.5m * iqr;
-            decimal highLimit = q3 + 1.5m * iqr;
-
-            return sorted.Where(p => p >= lowLimit && p <= highLimit).ToList();
-        }
-
-        private static decimal GetPercentile(List<decimal> sortedPrices, double percentile)
-        {
-            double count = sortedPrices.Count;
-            double index = percentile * (count - 1);
-            int lowIndex = (int)Math.Floor(index);
-            int highIndex = (int)Math.Ceiling(index);
-            
-            if (lowIndex == highIndex)
-            {
-                return sortedPrices[lowIndex];
-            }
-
-            decimal lowValue = sortedPrices[lowIndex];
-            decimal highValue = sortedPrices[highIndex];
-            decimal weight = (decimal)(index - lowIndex);
-
-            return lowValue + weight * (highValue - lowValue);
-        }
-
-        private static decimal GetMedian(List<decimal> sortedPrices)
-        {
-            if (sortedPrices == null || sortedPrices.Count == 0) return 0m;
-            int count = sortedPrices.Count;
-            int mid = count / 2;
-            if (count % 2 == 0)
-            {
-                return (sortedPrices[mid - 1] + sortedPrices[mid]) / 2m;
-            }
-            return sortedPrices[mid];
-        }
-
-        public static (List<string> defects, decimal repairCost, bool isStolen) DetectDefectsAndEstimateRepair(string title, string description, string brand, string model, int batteryHealth)
+        public static (List<string> defects, decimal repairCost, bool isStolen, bool isCritical) DetectDefectsAndEstimateRepair(
+            string title, string description, string brand, string model, int batteryHealth)
         {
             var defects = new List<string>();
             decimal repairCost = 0m;
             bool isStolen = false;
+            bool isCritical = false;
 
             string text = (title + " " + description).ToLowerInvariant();
 
             // 1. iCloud / MDM / Lock / Stolen checks
-            if (Regex.IsMatch(text, @"\b(icloud|блокировк|заблокир|mdm|activation lock|bypass|активац|на запчаст|запчаст|piese)\b"))
+            if (Regex.IsMatch(text, @"\b(?:icloud|айклауд|cont|blocked|blocat|r-sim|r sim|rsim|gevey|mdm|bypass|байпас|заблокирован|блокировк|заблокир|activation lock|активац)\w*"))
             {
-                defects.Add("Блокировка / На запчасти");
+                defects.Add("Заблокирован (iCloud / MDM / R-SIM)");
                 isStolen = true;
+                isCritical = true;
             }
 
-            // 2. Screen cracks / damage
-            if (Regex.IsMatch(text, @"\b(разбит|трещин|битый|скол|broken|cracked|spart|fisur|crăpat|crapat|ecran spart)\b") && 
-                !Regex.IsMatch(text, @"\b(пленк|стекл.*защит|стекло защит|защитн.*стекл|pelicul|sticla.*prot)\b"))
+            // 2. Screen issues
+            if (Regex.IsMatch(text, @"\b(?:разбит|трещин|скол|spart|sticl|crap|defect|пятн|pete|полос|lines|lovit|burn.*in|выгоран)\w*\b") &&
+                Regex.IsMatch(text, @"(?:экран|дисплей|стекл|display|ecran|sticla|screen)\w*"))
             {
-                defects.Add("Разбит экран / стекло");
-                decimal screenCost = 1500m;
-                if (brand.Equals("Apple", StringComparison.OrdinalIgnoreCase))
-                {
-                    if (model.Contains("Pro") || model.Contains("Max"))
-                    {
-                        screenCost = 2500m;
-                    }
-                }
-                else
-                {
-                    if (model.Contains("Ultra") || model.Contains("Fold") || model.Contains("Flip") || model.Contains("S20") || model.Contains("S21") || model.Contains("S22") || model.Contains("S23") || model.Contains("S24"))
-                    {
-                        screenCost = 2000m;
-                    }
-                    else
-                    {
-                        screenCost = 1000m;
-                    }
-                }
-                repairCost += screenCost;
+                defects.Add("Разбит/поврежден дисплей или стекло");
+                repairCost += 2500m; // Generic screen replacement cost
+                if (Regex.IsMatch(text, @"\b(?:на запчаст|на зп|части|parturi|piese)\w*\b"))
+                    isCritical = true;
+            }
+
+            // 2.5 Screen replaced
+            if (Regex.IsMatch(text, @"(?:меняный.*экран|экран.*менял|ecran schimbat|display schimbat|заменен.*экран|дисплей.*заменен|экран.*заменен|заменен.*дисплей)"))
+            {
+                defects.Add("Заменен дисплей (неоригинал)");
+                repairCost += 1000m; // Penalize for non-original screen
             }
 
             // 3. FaceID / TouchID / Sensors
-            if (Regex.IsMatch(text, @"\b(faceid|face id|touchid|touch id|отпечат|сканер|распознаван)\b") && 
-                Regex.IsMatch(text, @"\b(не.*работ|ошибк|defect|неактив|не актив|nu func|nu luc)\b"))
+            if ((Regex.IsMatch(text, @"\b(?:faceid|face id|touchid|touch id|отпечат|сканер|распознаван)\w*") &&
+                 Regex.IsMatch(text, @"\b(?:не.*работ|ошибк|defect|неактив|не актив|nu func|nu luc|off)\w*\b")) ||
+                 Regex.IsMatch(text, @"\b(?:fara face|fără face|fara touch|fără touch|face id off)\w*\b"))
             {
                 defects.Add("Не работает FaceID/TouchID");
                 repairCost += 800m;
             }
 
-            // 4. Battery Health
-            if (brand.Equals("Apple", StringComparison.OrdinalIgnoreCase))
+            // 4. Critical power / charging issues
+            if (Regex.IsMatch(text, @"\b(?:не заряжается|не заряж|заряд.*не|power.*issue|плохая зарядка|зарядка не)\w*\b"))
+            {
+                defects.Add("Проблемы с зарядкой");
+                repairCost += 500m;
+                if (Regex.IsMatch(text, @"\b(?:не включается|не заряжается|разблокировать|на запчаст)\w*\b"))
+                    isCritical = true;
+            }
+
+            // 5. Battery Health
+            if (Regex.IsMatch(text, @"\b(?:вздут|надул|не.*держит|мертв|dead|schimbat|менял|заменен|требует.*замен|service)\w*\b") &&
+                Regex.IsMatch(text, @"(?:акб|battery|батаре|bateri)\w*"))
+            {
+                defects.Add("Требуется замена АКБ");
+                repairCost += 800m;
+            }
+            else if (brand.Equals("Apple", StringComparison.OrdinalIgnoreCase))
             {
                 if (batteryHealth > 0 && batteryHealth < 80)
                 {
                     defects.Add($"Износ АКБ ({batteryHealth}%)");
                     repairCost += 400m;
                 }
-                else if (Regex.IsMatch(text, @"\b(менять акб|замена акб|батаре.*плох|замена батаре|акб.*сервис)\b"))
-                {
-                    defects.Add("Сервис АКБ / Требуется замена");
-                    repairCost += 400m;
-                }
             }
 
-            // 5. Back glass / cover damage
-            if (Regex.IsMatch(text, @"\b(задн.*крышк|задн.*стекл|корпус.*разбит|capac spate|sticla spate)\b"))
+            // 6. Back glass / cover damage
+            if (Regex.IsMatch(text, @"\b(?:задн|крышк|back|spate)\w*\b") &&
+                Regex.IsMatch(text, @"\b(?:разбит|трещин|spart|crap|defect)\w*\b"))
             {
-                defects.Add("Разбито заднее стекло / крышка");
-                repairCost += 500m;
+                defects.Add("Разбита задняя крышка");
+                repairCost += 1200m;
             }
 
-            // 6. Camera issues
-            if (Regex.IsMatch(text, @"\b(камер.*не.*работ|камер.*разбит|пятн.*камер|линз.*разбит|focus.*не|фокус.*не)\b"))
+            // 7. Camera issues
+            if (Regex.IsMatch(text, @"(?:камер|camer)\w*") &&
+                Regex.IsMatch(text, @"(?:мутн|тряс|не.*фокус|пятн|pete|defect|nu func|nu luc|разбит|spart)\w*"))
             {
                 defects.Add("Дефект камеры");
-                repairCost += 600m;
+                repairCost += 1800m;
             }
 
-            return (defects, repairCost, isStolen);
+            // 8. Replica / non-original / fake devices
+            if (Regex.IsMatch(text, @"\b(?:копия|реплика|fake|non[- ]?original|неоригинал|не оригинал|оригинал\?|non functional|clone)\w*\b"))
+            {
+                defects.Add("Непроверенный / копия");
+                repairCost += 800m;
+                isCritical = true;
+            }
+
+            // 9. Minor condition and wear
+            if (Regex.IsMatch(text, @"\b(?:царап|вмят|скол|потертост|искривлен|люфт|сломанный)\w*\b") &&
+                !Regex.IsMatch(text, @"\b(?:стекл.*защит|защитн.*стекл|pelicul|protector)\w*\b"))
+            {
+                defects.Add("Визуальные дефекты корпуса");
+                repairCost += 300m;
+            }
+
+            if (Regex.IsMatch(text, @"\b(?:нерабоч|не.*работ|не работает|глюч|глюк|через раз|не включа|не зажига|не отвечает)\w*\b"))
+            {
+                defects.Add("Серьёзные проблемы в работе");
+                repairCost += 800m;
+                isCritical = true;
+            }
+
+            if (!isCritical && defects.Count == 0 && Regex.IsMatch(text, @"\b(на запчасти|запчасти|parts only|for parts)\b"))
+            {
+                defects.Add("На запчасти");
+                repairCost += 1000m;
+                isCritical = true;
+            }
+
+            return (defects, repairCost, isStolen, isCritical);
         }
     }
 }

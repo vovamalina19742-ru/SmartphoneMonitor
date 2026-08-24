@@ -1,11 +1,14 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Net.Http;
 using System.Text;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
+using Serilog;
 using SmartphoneMonitor.Models;
 
 namespace SmartphoneMonitor.Services
@@ -13,22 +16,42 @@ namespace SmartphoneMonitor.Services
     public class TelegramNotificationService
     {
         private readonly HttpClient _httpClient;
+        private readonly string _failedQueuePath;
         private int _lastUpdateId = 0;
         private CancellationTokenSource? _pollingCts;
 
         public event Action<string, string>? BlacklistRequested;
+        public event Action<string, string>? BlacklistLoginRequested;
 
         public TelegramNotificationService()
         {
-            _httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
+            _httpClient = new HttpClient
+            {
+                Timeout = TimeSpan.FromSeconds(15)
+            };
+            _failedQueuePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "data", "failed_notifications.log");
+            try
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(_failedQueuePath) ?? ".");
+            }
+            catch { }
+        }
+
+        public TelegramNotificationService(IHttpClientFactory httpClientFactory)
+        {
+            _httpClient = httpClientFactory.CreateClient("telegram") ?? new HttpClient();
+            _failedQueuePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "data", "failed_notifications.log");
+            try
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(_failedQueuePath) ?? ".");
+            }
+            catch { }
         }
 
         public async Task<bool> SendTestMessageAsync(string token, string chatId)
         {
             if (string.IsNullOrEmpty(token) || string.IsNullOrEmpty(chatId))
-            {
                 return false;
-            }
 
             try
             {
@@ -42,10 +65,52 @@ namespace SmartphoneMonitor.Services
 
                 var content = new StringContent(JsonConvert.SerializeObject(payload), Encoding.UTF8, "application/json");
                 var response = await _httpClient.PostAsync(url, content);
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    string errorBody = await response.Content.ReadAsStringAsync();
+                    Log.Warning("SendTestMessage failed (status {Status}): {Error}", response.StatusCode, errorBody);
+                }
+
                 return response.IsSuccessStatusCode;
             }
-            catch
+            catch (Exception ex)
             {
+                Log.Error(ex, "SendTestMessageAsync exception");
+                return false;
+            }
+        }
+
+        public async Task<bool> SendTextMessageAsync(string token, string chatId, string messageHtml)
+        {
+            if (string.IsNullOrEmpty(token) || string.IsNullOrEmpty(chatId))
+                return false;
+
+            try
+            {
+                string url = $"https://api.telegram.org/bot{token}/sendMessage";
+                var payload = new
+                {
+                    chat_id = chatId,
+                    text = messageHtml,
+                    parse_mode = "HTML",
+                    disable_web_page_preview = true
+                };
+
+                var content = new StringContent(JsonConvert.SerializeObject(payload), Encoding.UTF8, "application/json");
+                var response = await _httpClient.PostAsync(url, content);
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    string errorBody = await response.Content.ReadAsStringAsync();
+                    Log.Warning("SendTextMessage failed (status {Status}): {Error}", response.StatusCode, errorBody);
+                }
+
+                return response.IsSuccessStatusCode;
+            }
+            catch (Exception ex)
+            {
+                Log.Error(ex, "SendTextMessageAsync exception");
                 return false;
             }
         }
@@ -53,9 +118,7 @@ namespace SmartphoneMonitor.Services
         public async Task<bool> SendHotDealNotificationAsync(string token, string chatId, HotDeal deal)
         {
             if (string.IsNullOrEmpty(token) || string.IsNullOrEmpty(chatId))
-            {
                 return false;
-            }
 
             try
             {
@@ -64,40 +127,41 @@ namespace SmartphoneMonitor.Services
                 var sb = new StringBuilder();
                 sb.AppendLine($"⭐ <b>ГОРЯЧАЯ СДЕЛКА! [Рекомендация: {deal.RecommendationScore:F0}/100]</b>");
                 sb.AppendLine($"<b>Модель:</b> {EscapeHtml(deal.Brand)} {EscapeHtml(deal.Title)}");
-                sb.AppendLine($"<b>Цена:</b> {deal.PriceValue:F0} MDL (Рынок: {deal.BrandMedian:F0} MDL, Скидка: {deal.DiscountPercent:F0}%)");
+                string marketType = deal.IsNew ? "Рынок новых" : "Рынок б/у";
+                sb.AppendLine($"<b>Цена:</b> {deal.PriceValue:F0} MDL ({marketType}: {deal.BrandMedian:F0} MDL, Скидка: {deal.DiscountPercent:F0}%)");
 
                 if (deal.NetProfitMargin > 0m)
-                {
                     sb.AppendLine($"<b>Чистая маржа:</b> +{deal.NetProfitMargin:F0} MDL");
+
+                if (deal.RecommendedResellPrice > 0m)
+                    sb.AppendLine($"<b>Рекомендованная цена перепродажи:</b> {deal.RecommendedResellPrice:F0} MDL");
+
+                if (!string.IsNullOrEmpty(deal.AiReasoning))
+                {
+                    sb.AppendLine();
+                    sb.AppendLine(EscapeHtml(deal.AiReasoning));
                 }
+
                 if (deal.RepairCost > 0m)
-                {
                     sb.AppendLine($"<b>Стоимость ремонта:</b> {deal.RepairCost:F0} MDL");
-                }
+
                 if (deal.Defects != null && deal.Defects.Count > 0)
-                {
                     sb.AppendLine($"<b>Дефекты:</b> {EscapeHtml(string.Join(", ", deal.Defects))}");
-                }
+
                 if (deal.StorageGB > 0)
-                {
                     sb.AppendLine($"<b>Память:</b> {deal.StorageGB} GB");
-                }
+
                 if (deal.BatteryHealth > 0)
-                {
                     sb.AppendLine($"<b>АКБ:</b> {deal.BatteryHealth}%");
-                }
+
                 if (deal.Views > 0)
-                {
                     sb.AppendLine($"<b>Просмотры:</b> 👁 {deal.Views}");
-                }
+
                 if (!string.IsNullOrEmpty(deal.SellerName))
-                {
                     sb.AppendLine($"<b>Продавец:</b> {EscapeHtml(deal.SellerName)}");
-                }
+
                 if (!string.IsNullOrEmpty(deal.PhoneNumber))
-                {
                     sb.AppendLine($"<b>Телефон:</b> <code>{deal.PhoneNumber}</code>");
-                }
 
                 var buttons = new List<object[]>();
                 var row1 = new List<object>
@@ -106,16 +170,23 @@ namespace SmartphoneMonitor.Services
                 };
 
                 if (!string.IsNullOrEmpty(deal.PhoneNumber))
-                {
                     row1.Add(new { text = "📞 Позвонить", url = $"tel:{deal.PhoneNumber}" });
-                }
+
                 buttons.Add(row1.ToArray());
 
                 if (!string.IsNullOrEmpty(deal.PhoneNumber))
                 {
                     buttons.Add(new[]
                     {
-                        new { text = "🚫 В черный список", callback_data = $"blacklist:{deal.PhoneNumber}" }
+                        new { text = "🚫 Заблокировать телефон", callback_data = $"blacklist:{deal.PhoneNumber}" }
+                    });
+                }
+
+                if (!string.IsNullOrEmpty(deal.AuthorLogin))
+                {
+                    buttons.Add(new[]
+                    {
+                        new { text = $"🚫 Заблокировать логин ({deal.AuthorLogin})", callback_data = $"blacklist_login:{deal.AuthorLogin}" }
                     });
                 }
 
@@ -129,12 +200,95 @@ namespace SmartphoneMonitor.Services
 
                 var content = new StringContent(JsonConvert.SerializeObject(payload), Encoding.UTF8, "application/json");
                 var response = await _httpClient.PostAsync(url, content);
-                return response.IsSuccessStatusCode;
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    string errorBody = await response.Content.ReadAsStringAsync();
+                    Log.Warning("SendHotDealNotification failed (status {Status}): {Error}. Retrying plain text...", response.StatusCode, errorBody);
+
+                    var fallbackPayload = new
+                    {
+                        chat_id = chatId,
+                        text = sb.ToString().Replace("<b>", "").Replace("</b>", "").Replace("<code>", "").Replace("</code>", "").Replace("<i>", "").Replace("</i>", "").Replace("&lt;", "<").Replace("&gt;", ">").Replace("&amp;", "&"),
+                        reply_markup = new { inline_keyboard = buttons.ToArray() }
+                    };
+                    var fallbackContent = new StringContent(JsonConvert.SerializeObject(fallbackPayload), Encoding.UTF8, "application/json");
+                    var fallbackResp = await _httpClient.PostAsync(url, fallbackContent);
+                    return fallbackResp.IsSuccessStatusCode;
+                }
+
+                return true;
             }
-            catch
+            catch (Exception ex)
             {
+                Log.Error(ex, "SendHotDealNotificationAsync exception");
                 return false;
             }
+        }
+
+        public Task SendMessageAsync(string text)
+        {
+            Log.Warning("Telegram not configured — cannot send: {Text}", text);
+            return Task.CompletedTask;
+        }
+
+        public async Task SendMessageAsync(string token, string chatId, string text)
+        {
+            if (string.IsNullOrEmpty(token) || string.IsNullOrEmpty(chatId))
+            {
+                Log.Warning("Telegram not configured — skipping notification: {Text}", text);
+                return;
+            }
+
+            string url = $"https://api.telegram.org/bot{token}/sendMessage";
+            var payload = new { chat_id = chatId, text = text, parse_mode = "HTML" };
+
+            int maxAttempts = 3;
+            int attempt = 0;
+            while (attempt < maxAttempts)
+            {
+                attempt++;
+                try
+                {
+                    var content = new StringContent(JsonConvert.SerializeObject(payload), Encoding.UTF8, "application/json");
+                    var resp = await _httpClient.PostAsync(url, content);
+                    if (resp.IsSuccessStatusCode)
+                    {
+                        Log.Debug("Telegram message sent on attempt {Attempt}", attempt);
+                        return;
+                    }
+                    else
+                    {
+                        string errorBody = await resp.Content.ReadAsStringAsync();
+                        Log.Warning("Telegram send failed (status {Status}) on attempt {Attempt}: {Error}", resp.StatusCode, attempt, errorBody);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Log.Warning(ex, "Telegram send error on attempt {Attempt}", attempt);
+                }
+
+                await Task.Delay(500 * attempt);
+            }
+
+            // All attempts failed — persist to failed queue file WITH token and chatId
+            try
+            {
+                string maskedToken = !string.IsNullOrEmpty(token) && token.Length > 8 ? token.Substring(0, 4) + "***" : "***";
+                var entry = new FailedNotification { Timestamp = DateTime.UtcNow, Text = text, Token = maskedToken, ChatId = chatId };
+                var line = System.Text.Json.JsonSerializer.Serialize(entry);
+                await File.AppendAllTextAsync(_failedQueuePath, line + Environment.NewLine);
+                Log.Information("Persisted failed Telegram notification to queue: {Path}", _failedQueuePath);
+            }
+            catch (Exception ex)
+            {
+                Log.Error(ex, "Failed to persist Telegram notification");
+            }
+        }
+
+        public async Task SendMessageWithFullCredentialsAsync(string token, string chatId, string text)
+        {
+            await SendMessageAsync(token, chatId, text);
         }
 
         public void StartPolling(string token, string chatId)
@@ -208,14 +362,22 @@ namespace SmartphoneMonitor.Services
                         int msgId = message["message_id"]?.Value<int>() ?? 0;
                         string originalText = message["text"]?.Value<string>() ?? string.Empty;
 
-                        // Trigger blacklist callback in MainViewModel
                         BlacklistRequested?.Invoke(phone, "Добавлен из Telegram-бота");
 
-                        // Answer Callback Query to show Telegram toast message
                         await AnswerCallbackQueryAsync(token, queryId, "Номер добавлен в ЧС и отфильтрован!");
-
-                        // Edit original message text
                         await EditMessageTextAsync(token, msgChatId, msgId, originalText);
+                    }
+                    else if (data.StartsWith("blacklist_login:") && message != null)
+                    {
+                        string login = data.Substring("blacklist_login:".Length);
+                        string msgChatId = message["chat"]?["id"]?.ToString() ?? string.Empty;
+                        int msgId = message["message_id"]?.Value<int>() ?? 0;
+                        string originalText = message["text"]?.Value<string>() ?? string.Empty;
+
+                        BlacklistLoginRequested?.Invoke(login, "Добавлен из Telegram-бота");
+
+                        await AnswerCallbackQueryAsync(token, queryId, "Логин добавлен в ЧС и отфильтрован!");
+                        await EditMessageTextAsync(token, msgChatId, msgId, originalText, isLogin: true, blockedItem: login);
                     }
                 }
             }
@@ -238,12 +400,15 @@ namespace SmartphoneMonitor.Services
             catch { }
         }
 
-        private async Task EditMessageTextAsync(string token, string chatId, int messageId, string originalText)
+        private async Task EditMessageTextAsync(string token, string chatId, int messageId, string originalText, bool isLogin = false, string blockedItem = "")
         {
             try
             {
                 string url = $"https://api.telegram.org/bot{token}/editMessageText";
-                string updatedText = $"🚫 <b>[НОМЕР ЗАБЛОКИРОВАН В ЧС]</b>\n\n{originalText}";
+                string prefix = isLogin
+                    ? $"🚫 <b>[ЛОГИН {blockedItem} ЗАБЛОКИРОВАН В ЧС]</b>"
+                    : "🚫 <b>[НОМЕР ЗАБЛОКИРОВАН В ЧС]</b>";
+                string updatedText = $"{prefix}\n\n{originalText}";
 
                 var payload = new
                 {
@@ -262,7 +427,15 @@ namespace SmartphoneMonitor.Services
         private static string EscapeHtml(string text)
         {
             if (string.IsNullOrEmpty(text)) return string.Empty;
-            return text.Replace("&", "&amp;").Replace("<", "&lt;").Replace(">", "&gt;");
+            return text.Replace("&", "&" + "amp;").Replace("<", "&" + "lt;").Replace(">", "&" + "gt;");
+        }
+
+        private class FailedNotification
+        {
+            public DateTime Timestamp { get; set; }
+            public string Text { get; set; } = string.Empty;
+            public string? Token { get; set; }
+            public string? ChatId { get; set; }
         }
     }
 }

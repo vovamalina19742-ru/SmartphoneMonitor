@@ -8,3 +8,15 @@ obj/
 *.exe
 *.dll
 *.pdb
+*.log
+*.db
+*.csv
+data/
+logs/
+failed_notifications.log
+appsettings.Development.json
+.env
+*.token
+*.key
+*.secret
+credentials.json

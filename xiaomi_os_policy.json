@@ -1,0 +1,16 @@
+{
+  "Android16SupportedPatterns": [
+    "Xiaomi 13", "Xiaomi 14", "Xiaomi 15", "Xiaomi 16", "Xiaomi 17",
+    "Redmi K60", "Redmi K70", "Redmi K80", "Redmi K90",
+    "Redmi Note 13", "Redmi Note 14", "Redmi Note 15",
+    "POCO F5", "POCO F6", "POCO F7", "POCO F8",
+    "POCO X6", "POCO X7", "POCO X8"
+  ],
+  "Android17SupportedPatterns": [
+    "Xiaomi 14", "Xiaomi 15", "Xiaomi 16", "Xiaomi 17",
+    "Redmi K70", "Redmi K80", "Redmi K90",
+    "Redmi Note 14", "Redmi Note 15",
+    "POCO F6", "POCO F7", "POCO F8",
+    "POCO X7", "POCO X8"
+  ]
+}

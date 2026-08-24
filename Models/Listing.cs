@@ -17,6 +17,7 @@ namespace SmartphoneMonitor.Models
         public string Description { get; set; } = string.Empty;
         public string Url { get; set; } = string.Empty;
         public DateTime PostedDate { get; set; } = DateTime.Now;
+        public string AuthorLogin { get; set; } = string.Empty;
         public bool IsCommercial { get; set; }
         public bool IsUrgent { get; set; }
         public string Model { get; set; } = string.Empty;
@@ -26,6 +27,66 @@ namespace SmartphoneMonitor.Models
         public string ComparisonColor { get; set; } = "#555555";
         public string ComparisonBg { get; set; } = "#EEEEEE";
         public int BatteryHealth { get; set; }
+        public bool IsNew { get; set; }
+
+        public string NewSmartphoneCategory { get; set; } = "PrivateUsed";
+
+        public string CategoryBadgeText
+        {
+            get
+            {
+                return NewSmartphoneCategory switch
+                {
+                    "RetailChain" => "🏢 Крупный ритейл",
+                    "Shop999" => "🏪 Магазин 999",
+                    "PrivateNew" => "👤 Частник (Новый)",
+                    _ => IsNew ? "✨ Новый" : "📱 б/у"
+                };
+            }
+        }
+
+        public string CategoryBadgeBg
+        {
+            get
+            {
+                return NewSmartphoneCategory switch
+                {
+                    "RetailChain" => "#F3E8FF",
+                    "Shop999" => "#E0F2FE",
+                    "PrivateNew" => "#FEF3C7",
+                    _ => "#F3F4F6"
+                };
+            }
+        }
+
+        public string CategoryBadgeFg
+        {
+            get
+            {
+                return NewSmartphoneCategory switch
+                {
+                    "RetailChain" => "#6B21A8",
+                    "Shop999" => "#0369A1",
+                    "PrivateNew" => "#B45309",
+                    _ => "#374151"
+                };
+            }
+        }
+
+        public decimal RetailPrice { get; set; }
+        public string RetailShopName { get; set; } = string.Empty;
+        public decimal RetailSavings { get; set; }
+        public double RetailSavingsPercent { get; set; }
+        public bool HasRetailComparison => RetailPrice > 0 && RetailSavings > 0;
+
+        public string RetailComparisonText
+        {
+            get
+            {
+                if (!HasRetailComparison) return string.Empty;
+                return $"🛒 В магазинах ({RetailShopName}): {RetailPrice:F0} MDL  |  💡 Реальная выгода: -{RetailSavings:F0} MDL (-{RetailSavingsPercent:F0}%)";
+            }
+        }
 
         public string StorageLabel
         {
@@ -87,6 +148,8 @@ namespace SmartphoneMonitor.Models
             }
         }
 
+        public bool HasCriticalDefect { get; set; }
+
         public string MarginLabel
         {
             get
@@ -98,5 +161,9 @@ namespace SmartphoneMonitor.Models
                 return $"💸 Маржа: +{NetProfitMargin:F0} MDL";
             }
         }
+
+        public decimal RecommendedResellPrice { get; set; }
+        public string AiReasoning { get; set; } = string.Empty;
+        public System.Collections.Generic.List<string> ImageUrls { get; set; } = new System.Collections.Generic.List<string>();
     }
 }

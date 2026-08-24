@@ -1,0 +1,72 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "description": "Dashboard for SmartphoneMonitor metrics",
+  "editable": true,
+  "gnetId": null,
+  "graphTooltip": 0,
+  "id": null,
+  "iteration": 162738,
+  "links": [],
+  "panels": [
+    {
+      "datasource": "Prometheus",
+      "fieldConfig": {"defaults": {}, "overrides": []},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+      "id": 1,
+      "options": {"legend": {"displayMode": "list"}},
+      "targets": [
+        {"expr": "promo_matches_total", "legendFormat": "total matches", "refId": "A"}
+      ],
+      "title": "Total Promo Matches",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "Prometheus",
+      "fieldConfig": {"defaults": {}, "overrides": []},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
+      "id": 2,
+      "options": {"legend": {"displayMode": "list"}},
+      "targets": [
+        {"expr": "hotdeals_current", "legendFormat": "hot deals", "refId": "A"}
+      ],
+      "title": "Current Hot Deals",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "Prometheus",
+      "fieldConfig": {"defaults": {}, "overrides": []},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
+      "id": 3,
+      "options": {"legend": {"displayMode": "list"}},
+      "targets": [
+        {"expr": "rate(promo_matches_total[5m])", "legendFormat": "promo matches rate", "refId": "A"}
+      ],
+      "title": "Promo Matches Rate (5m)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "Prometheus",
+      "fieldConfig": {"defaults": {}, "overrides": []},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
+      "id": 4,
+      "options": {"legend": {"displayMode": "list"}},
+      "targets": [
+        {"expr": "analysis_duration_seconds_sum / max(1, analysis_runs)", "legendFormat": "avg analysis sec", "refId": "A"}
+      ],
+      "title": "Average Analysis Duration (s)",
+      "type": "timeseries"
+    }
+  ],
+  "schemaVersion": 30,
+  "style": "dark",
+  "tags": ["smartphone", "monitor"],
+  "templating": {"list": []},
+  "time": {"from": "now-6h", "to": "now"},
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "SmartphoneMonitor",
+  "uid": null,
+  "version": 1
+}

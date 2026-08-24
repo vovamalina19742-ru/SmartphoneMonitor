@@ -147,7 +147,7 @@
                 <TextBlock Margin="0,8,0,0" FontSize="12" Foreground="{StaticResource TextSub}">
                   <Run Text="Выбрано: " /> <Run Text="{Binding MaxPages, Mode=OneWay}" /> <Run Text=" стр. ≈ " /> <Run Text="{Binding EstimatedListings, Mode=OneWay}" /> <Run Text=" объявлений" /></TextBlock>
                 
-                <CheckBox Content="Загружать контакты (только для кандидатов на покупку)" FontSize="13" Foreground="{StaticResource TextMain}" Margin="0,14,0,0" VerticalContentAlignment="Center" IsChecked="{Binding FetchDetails}" />
+                <CheckBox Content="Глубокий анализ (загружать описание, батарею, дефекты и контакты)" FontSize="13" Foreground="{StaticResource TextMain}" Margin="0,14,0,0" VerticalContentAlignment="Center" IsChecked="{Binding FetchDetails}" />
                 
                 <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
                   <CheckBox Content="Включить фоновый авто-мониторинг" FontSize="13" Foreground="{StaticResource TextMain}" VerticalContentAlignment="Center" IsChecked="{Binding IsAutoMonitoring, Mode=TwoWay}" />
@@ -389,7 +389,10 @@
                                 </Hyperlink>
                               </TextBlock>
                               <StackPanel Orientation="Horizontal" Margin="0,2,0,0">
-                                <Border CornerRadius="4" Padding="5,1" Margin="0,0,5,0" Background="#EEF2FF">
+                                 <Border CornerRadius="4" Padding="6,1" Margin="0,0,5,0" Background="{Binding ScoreBadgeBg}">
+                                   <TextBlock FontSize="10" Foreground="{Binding ScoreBadgeFg}" FontWeight="Bold" Text="{Binding ScoreBadgeText}" />
+                                 </Border>
+                                 <Border CornerRadius="4" Padding="5,1" Margin="0,0,5,0" Background="#EEF2FF">
                                   <FrameworkElement.Style>
                                     <Style TargetType="{x:Type Border}">
                                       <Style.Triggers>
@@ -437,10 +440,43 @@
                                       <DataTrigger Value="" Binding="{Binding DefectsLabel}">
                                         <Setter Property="Visibility" Value="Collapsed" />
                                       </DataTrigger>
+                                      <DataTrigger Value="" Binding="{Binding MarginLabel}">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                      </DataTrigger>
                                     </Style.Triggers>
                                   </Style>
                                 </FrameworkElement.Style>
                               </TextBlock>
+                               <Border Margin="0,5,0,0" Padding="8,4" Background="#F3E8FF" CornerRadius="4" BorderBrush="#D8B4FE" BorderThickness="1">
+                                 <FrameworkElement.Style>
+                                   <Style TargetType="{x:Type Border}">
+                                     <Style.Triggers>
+                                       <DataTrigger Binding="{Binding HasRetailComparison}" Value="False">
+                                         <Setter Property="Visibility" Value="Collapsed" />
+                                       </DataTrigger>
+                                     </Style.Triggers>
+                                   </Style>
+                                 </FrameworkElement.Style>
+                                 <TextBlock FontSize="11" FontWeight="Bold" Foreground="#6B21A8" Text="{Binding RetailComparisonText}" />
+                               </Border>
+                               <Expander Header="🤖 Рассуждения ИИ-судьи (Reasoning Steps)" IsExpanded="False" Margin="0,6,0,0" Foreground="#0284C7" FontSize="11" FontWeight="SemiBold">
+                                 <FrameworkElement.Style>
+                                   <Style TargetType="{x:Type Expander}">
+                                     <Style.Triggers>
+                                       <DataTrigger Value="" Binding="{Binding AiReasoning}">
+                                         <Setter Property="Visibility" Value="Collapsed" />
+                                       </DataTrigger>
+                                       <DataTrigger Binding="{Binding AiReasoning}" Value="{x:Null}">
+                                         <Setter Property="Visibility" Value="Collapsed" />
+                                       </DataTrigger>
+                                     </Style.Triggers>
+                                   </Style>
+                                 </FrameworkElement.Style>
+                                 <Border Background="#F0F9FF" BorderBrush="#BAE6FD" BorderThickness="1" CornerRadius="6" Padding="10" Margin="0,4,0,0">
+                                   <TextBox FontSize="10.5" Foreground="#0369A1" TextWrapping="Wrap" FontFamily="Consolas" Text="{Binding AiReasoning}" IsReadOnly="True" BorderThickness="0" Background="Transparent" />
+                                 </Border>
+                               </Expander>
+                               <Button Content="👁️ Запросить ИИ-Осмотр" Style="{StaticResource BtnPill}" Background="#FFF3E0" Foreground="#E65100" BorderBrush="#FFCC80" BorderThickness="1" Padding="8,4" Margin="0,6,0,0" HorizontalAlignment="Left" Command="{Binding DataContext.RunVisionAnalysisCommand, RelativeSource={RelativeSource AncestorType=ItemsControl}}" CommandParameter="{Binding}" />
                               <TextBlock FontSize="11" Foreground="#43A047" FontWeight="Bold" Margin="0,4,0,0" Text="{Binding MarginLabel}">
                                 <FrameworkElement.Style>
                                   <Style TargetType="{x:Type TextBlock}">
@@ -654,43 +690,89 @@
             <ColumnDefinition Width="320" />
             <ColumnDefinition Width="*" />
           </Grid.ColumnDefinitions>
-          <Border Background="{StaticResource BgCard}" CornerRadius="10" Padding="20" Margin="0,0,12,0">
-            <StackPanel>
-              <TextBlock Text="Добавить номер" FontSize="14" FontWeight="Bold" Foreground="{StaticResource TextMain}" Margin="0,0,0,14" />
-              <TextBlock Text="Номер телефона" FontSize="12" Foreground="{StaticResource TextSub}" Margin="0,0,0,4" />
-              <TextBox Style="{StaticResource TB}" Margin="0,0,0,12" Text="{Binding NewBlacklistNumber, UpdateSourceTrigger=PropertyChanged}" />
-              <TextBlock Text="Причина (необязательно)" FontSize="12" Foreground="{StaticResource TextSub}" Margin="0,0,0,4" />
-              <TextBox Style="{StaticResource TB}" Margin="0,0,0,16" Text="{Binding NewBlacklistReason}" />
-              <Button Content="➕ Добавить" Style="{StaticResource Btn}" Height="36" Command="{Binding AddBlacklistCommand}" />
-            </StackPanel>
-          </Border>
+          <StackPanel Margin="0,0,12,0">
+            <!-- Add Phone -->
+            <Border Background="{StaticResource BgCard}" CornerRadius="10" Padding="16" Margin="0,0,0,12">
+              <StackPanel>
+                <TextBlock Text="Добавить номер" FontSize="14" FontWeight="Bold" Foreground="{StaticResource TextMain}" Margin="0,0,0,10" />
+                <TextBlock Text="Номер телефона" FontSize="11" Foreground="{StaticResource TextSub}" Margin="0,0,0,4" />
+                <TextBox Style="{StaticResource TB}" Margin="0,0,0,10" Text="{Binding NewBlacklistNumber, UpdateSourceTrigger=PropertyChanged}" />
+                <TextBlock Text="Причина (необязательно)" FontSize="11" Foreground="{StaticResource TextSub}" Margin="0,0,0,4" />
+                <TextBox Style="{StaticResource TB}" Margin="0,0,0,12" Text="{Binding NewBlacklistReason}" />
+                <Button Content="➕ Добавить телефон" Style="{StaticResource Btn}" Height="30" FontSize="11" Command="{Binding AddBlacklistCommand}" />
+              </StackPanel>
+            </Border>
+            <!-- Add Login -->
+            <Border Background="{StaticResource BgCard}" CornerRadius="10" Padding="16">
+              <StackPanel>
+                <TextBlock Text="Добавить логин" FontSize="14" FontWeight="Bold" Foreground="{StaticResource TextMain}" Margin="0,0,0,10" />
+                <TextBlock Text="Логин автора (owner.login)" FontSize="11" Foreground="{StaticResource TextSub}" Margin="0,0,0,4" />
+                <TextBox Style="{StaticResource TB}" Margin="0,0,0,10" Text="{Binding NewBlacklistLogin, UpdateSourceTrigger=PropertyChanged}" />
+                <TextBlock Text="Причина (необязательно)" FontSize="11" Foreground="{StaticResource TextSub}" Margin="0,0,0,4" />
+                <TextBox Style="{StaticResource TB}" Margin="0,0,0,12" Text="{Binding NewBlacklistLoginReason}" />
+                <Button Content="➕ Добавить логин" Style="{StaticResource Btn}" Height="30" FontSize="11" Command="{Binding AddBlacklistLoginCommand}" />
+              </StackPanel>
+            </Border>
+          </StackPanel>
           <Border Grid.Column="1" Background="{StaticResource BgCard}" CornerRadius="10" Padding="20">
-            <StackPanel>
-              <TextBlock Text="Список номеров" FontSize="14" FontWeight="Bold" Foreground="{StaticResource TextMain}" Margin="0,0,0,4" />
-              <TextBlock FontSize="12" Foreground="{StaticResource TextSub}" Margin="0,0,0,12" Text="{Binding Blacklist.Count, StringFormat=Всего: {0} номеров}" />
-              <TextBlock Text="Список пуст — добавьте номера коммерческих продавцов" FontSize="13" Foreground="{StaticResource TextSub}" HorizontalAlignment="Center" Margin="0,20" Visibility="{Binding Blacklist.Count, Converter={StaticResource ZeroHide}}" />
-              <ScrollViewer MaxHeight="500">
-                <ItemsControl ItemsSource="{Binding Blacklist}">
-                  <ItemsControl.ItemTemplate>
-                    <DataTemplate>
-                      <Border Background="{StaticResource BgStripe}" CornerRadius="6" Padding="10" Margin="0,0,0,6">
-                        <Grid>
-                          <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="Auto" />
-                          </Grid.ColumnDefinitions>
-                          <StackPanel>
-                            <TextBlock FontSize="13" FontWeight="Bold" Foreground="{StaticResource Danger}" Text="{Binding PhoneNumber}" />
-                            <TextBlock FontSize="11" Foreground="{StaticResource TextSub}" Text="{Binding Reason}" />
-                          </StackPanel>
-                          <Button Grid.Column="1" Content="✕" Width="28" Height="28" Background="#FFEBEE" Foreground="{StaticResource Danger}" BorderThickness="0" Cursor="Hand" Command="{Binding DataContext.RemoveBlacklistCommand, RelativeSource={RelativeSource AncestorType=ItemsControl}}" CommandParameter="{Binding}" />
-                        </Grid>
-                      </Border>
-                    </DataTemplate>
-                  </ItemsControl.ItemTemplate>
-                </ItemsControl>
-              </ScrollViewer>
-            </StackPanel>
+            <TabControl Background="Transparent" BorderThickness="0" Style="{StaticResource TC}">
+              <!-- Tab 1: Phones -->
+              <TabItem Header="📞 Номера телефонов" Style="{StaticResource TI}">
+                <StackPanel Margin="0,12,0,0">
+                  <TextBlock FontSize="12" Foreground="{StaticResource TextSub}" Margin="0,0,0,12" Text="{Binding Blacklist.Count, StringFormat=Всего: {0} номеров}" />
+                  <TextBlock Text="Список номеров пуст" FontSize="13" Foreground="{StaticResource TextSub}" HorizontalAlignment="Center" Margin="0,40" Visibility="{Binding Blacklist.Count, Converter={StaticResource ZeroHide}}" />
+                  <ScrollViewer MaxHeight="450">
+                    <ItemsControl ItemsSource="{Binding Blacklist}">
+                      <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                          <Border Background="{StaticResource BgStripe}" CornerRadius="6" Padding="10" Margin="0,0,0,6">
+                            <Grid>
+                              <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                              </Grid.ColumnDefinitions>
+                              <StackPanel>
+                                <TextBlock FontSize="13" FontWeight="Bold" Foreground="{StaticResource Danger}" Text="{Binding PhoneNumber}" />
+                                <TextBlock FontSize="11" Foreground="{StaticResource TextSub}" Text="{Binding Reason}" />
+                              </StackPanel>
+                              <Button Grid.Column="1" Content="✕" Width="28" Height="28" Background="#FFEBEE" Foreground="{StaticResource Danger}" BorderThickness="0" Cursor="Hand" Command="{Binding DataContext.RemoveBlacklistCommand, RelativeSource={RelativeSource AncestorType=ItemsControl}}" CommandParameter="{Binding}" />
+                            </Grid>
+                          </Border>
+                        </DataTemplate>
+                      </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                  </ScrollViewer>
+                </StackPanel>
+              </TabItem>
+              <!-- Tab 2: Logins -->
+              <TabItem Header="👤 Логины продавцов" Style="{StaticResource TI}">
+                <StackPanel Margin="0,12,0,0">
+                  <TextBlock FontSize="12" Foreground="{StaticResource TextSub}" Margin="0,0,0,12" Text="{Binding BlacklistLogins.Count, StringFormat=Всего: {0} аккаунтов}" />
+                  <TextBlock Text="Список логинов пуст" FontSize="13" Foreground="{StaticResource TextSub}" HorizontalAlignment="Center" Margin="0,40" Visibility="{Binding BlacklistLogins.Count, Converter={StaticResource ZeroHide}}" />
+                  <ScrollViewer MaxHeight="450">
+                    <ItemsControl ItemsSource="{Binding BlacklistLogins}">
+                      <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                          <Border Background="{StaticResource BgStripe}" CornerRadius="6" Padding="10" Margin="0,0,0,6">
+                            <Grid>
+                              <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                              </Grid.ColumnDefinitions>
+                              <StackPanel>
+                                <TextBlock FontSize="13" FontWeight="Bold" Foreground="{StaticResource Danger}" Text="{Binding Login}" />
+                                <TextBlock FontSize="11" Foreground="{StaticResource TextSub}" Text="{Binding Reason}" />
+                              </StackPanel>
+                              <Button Grid.Column="1" Content="✕" Width="28" Height="28" Background="#FFEBEE" Foreground="{StaticResource Danger}" BorderThickness="0" Cursor="Hand" Command="{Binding DataContext.RemoveBlacklistLoginCommand, RelativeSource={RelativeSource AncestorType=ItemsControl}}" CommandParameter="{Binding}" />
+                            </Grid>
+                          </Border>
+                        </DataTemplate>
+                      </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                  </ScrollViewer>
+                </StackPanel>
+              </TabItem>
+            </TabControl>
           </Border>
         </Grid>
       </TabItem>
@@ -702,6 +784,13 @@
           </Grid.ColumnDefinitions>
           <Border Background="{StaticResource BgCard}" CornerRadius="10" Padding="24" Margin="0,0,12,0" VerticalAlignment="Top">
             <StackPanel>
+              <TextBlock Text="Настройки Автомониторинга" FontSize="15" FontWeight="Bold" Foreground="{StaticResource TextMain}" Margin="0,0,0,16" />
+                
+              <CheckBox Content="Звуковое уведомление при новых сделках" IsChecked="{Binding SoundAlertEnabled}" Margin="0,0,0,16" FontSize="13" Foreground="{StaticResource TextMain}" />
+                
+              <TextBlock Text="Ключ Gemini API (для визуального анализа фото)" FontSize="12" Foreground="{StaticResource TextSub}" Margin="0,0,0,6" />
+              <TextBox Style="{StaticResource TB}" Margin="0,0,0,24" Height="32" Text="{Binding GeminiApiKey, UpdateSourceTrigger=PropertyChanged}" />
+
               <TextBlock Text="Настройки Telegram оповещений" FontSize="15" FontWeight="Bold" Foreground="{StaticResource TextMain}" Margin="0,0,0,16" />
               
               <CheckBox Content="Включить Telegram-оповещения" IsChecked="{Binding TelegramEnabled}" Margin="0,0,0,16" FontSize="13" Foreground="{StaticResource TextMain}" />
@@ -719,13 +808,109 @@
           
           <Border Grid.Column="1" Background="{StaticResource BgCard}" CornerRadius="10" Padding="24" VerticalAlignment="Top">
             <StackPanel>
-              <TextBlock Text="Настройки аудио и сохранения" FontSize="15" FontWeight="Bold" Foreground="{StaticResource TextMain}" Margin="0,0,0,16" />
+              <TextBlock Text="Настройки аудио и интеграций" FontSize="15" FontWeight="Bold" Foreground="{StaticResource TextMain}" Margin="0,0,0,16" />
               
-              <CheckBox Content="Звуковой сигнал при нахождении сделок" IsChecked="{Binding SoundAlertEnabled}" Margin="0,0,0,32" FontSize="13" Foreground="{StaticResource TextMain}" />
+              <CheckBox Content="Звуковой сигнал при нахождении сделок" IsChecked="{Binding SoundAlertEnabled}" Margin="0,0,0,24" FontSize="13" Foreground="{StaticResource TextMain}" />
               
+              <Border Background="#151624" CornerRadius="8" Padding="16" Margin="0,0,0,24">
+                <StackPanel>
+                  <TextBlock Text="🛍️ Сравнение цен ритейлеров Кишинева" FontSize="13" FontWeight="Bold" Foreground="{StaticResource TextMain}" Margin="0,0,0,8" />
+                  <TextBlock Text="Запускает фоновое обновление акционных цен в магазинах Darwin и Enter для более точной оценки скидок новых устройств." FontSize="11" Foreground="{StaticResource TextSub}" TextWrapping="Wrap" Margin="0,0,0,12" />
+                  <Button Content="🛍️ Обновить цены магазинов" Style="{StaticResource Btn}" Height="34" Command="{Binding UpdateRetailPricesCommand}" />
+                </StackPanel>
+              </Border>
+
               <Button Content="💾 Сохранить все настройки" Style="{StaticResource Btn}" Height="40" Background="{StaticResource Primary}" Foreground="White" Command="{Binding SaveSettingsCommand}" />
             </StackPanel>
           </Border>
+        </Grid>
+      </TabItem>
+      <TabItem Header="🤝 Арбитраж спроса" Style="{StaticResource TI}">
+        <Grid Margin="16">
+          <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+          </Grid.RowDefinitions>
+          <Border Grid.Row="0" Background="{StaticResource BgCard}" CornerRadius="10" Padding="16" Margin="0,0,0,12">
+            <DockPanel>
+              <Button DockPanel.Dock="Right" Content="🔄 Обновить связки" Style="{StaticResource BtnSm}" Height="32" Padding="12,0" Background="{StaticResource Primary}" Foreground="White" Command="{Binding RefreshDemandArbitrageCommand}" />
+              <StackPanel Orientation="Vertical">
+                <TextBlock Text="🤝 Арбитраж спроса («Куплю» ➔ «Продам»)" FontSize="15" FontWeight="Bold" Foreground="{StaticResource TextMain}" />
+                <TextBlock Text="Автоматическое сопоставление бюджетов покупателей с реальными ценами продавцов на 999.md" FontSize="11" Foreground="{StaticResource TextSub}" />
+              </StackPanel>
+            </DockPanel>
+          </Border>
+
+          <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+            <StackPanel>
+              <ItemsControl ItemsSource="{Binding DemandArbitrageDeals}">
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate>
+                    <Border Background="{StaticResource BgCard}" CornerRadius="10" Padding="16" Margin="0,0,0,12" BorderBrush="{StaticResource Border}" BorderThickness="1">
+                      <Grid>
+                        <Grid.ColumnDefinitions>
+                          <ColumnDefinition Width="*" />
+                          <ColumnDefinition Width="Auto" />
+                          <ColumnDefinition Width="*" />
+                          <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+
+                        <!-- Buyer Request -->
+                        <Border Grid.Column="0" Background="{StaticResource BgStripe}" CornerRadius="8" Padding="12">
+                          <StackPanel>
+                            <TextBlock Text="🛒 ПОКУПАТЕЛЬ (Ищет / Куплю)" FontSize="11" FontWeight="Bold" Foreground="{StaticResource Primary}" Margin="0,0,0,4" />
+                            <TextBlock Text="{Binding DemandTitle}" FontSize="13" FontWeight="SemiBold" Foreground="{StaticResource TextMain}" TextWrapping="Wrap" MaxHeight="36" TextTrimming="CharacterEllipsis" />
+                            <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+                              <TextBlock Text="Бюджет: " FontSize="12" Foreground="{StaticResource TextSub}" />
+                              <TextBlock FontSize="14" FontWeight="Bold" Foreground="{StaticResource Accent}">
+                                <Run Text="{Binding DemandBudget, StringFormat={}{0:F0}}" /> <Run Text=" lei" FontSize="11" />
+                              </TextBlock>
+                            </StackPanel>
+                            <TextBlock Text="{Binding DemandAuthor, StringFormat='Автор: {0}'}" FontSize="11" Foreground="{StaticResource TextSub}" Margin="0,2,0,0" />
+                            <Button Content="🔗 Открыть Куплю" Style="{StaticResource BtnSm}" Height="24" Padding="8,0" FontSize="11" Margin="0,6,0,0" HorizontalAlignment="Left" Command="{Binding DataContext.OpenUrlCommand, RelativeSource={RelativeSource AncestorType=ItemsControl}}" CommandParameter="{Binding DemandUrl}" />
+                          </StackPanel>
+                        </Border>
+
+                        <!-- Arrow / Profit badge -->
+                        <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="16,0">
+                          <Border Background="#E6F4EA" CornerRadius="12" Padding="12,6" HorizontalAlignment="Center">
+                            <StackPanel HorizontalAlignment="Center">
+                              <TextBlock Text="Спред / Прибыль" FontSize="10" Foreground="#137333" HorizontalAlignment="Center" />
+                              <TextBlock FontSize="16" FontWeight="Bold" Foreground="#137333" HorizontalAlignment="Center">
+                                <Run Text="+" /><Run Text="{Binding PotentialProfit, StringFormat={}{0:F0}}" /><Run Text=" lei" FontSize="11" />
+                              </TextBlock>
+                            </StackPanel>
+                          </Border>
+                          <TextBlock Text="{Binding MatchScore, StringFormat='Match: {0:P0}'}" FontSize="10" Foreground="{StaticResource TextSub}" HorizontalAlignment="Center" Margin="0,4,0,0" />
+                        </StackPanel>
+
+                        <!-- Seller Listing -->
+                        <Border Grid.Column="2" Background="{StaticResource BgStripe}" CornerRadius="8" Padding="12">
+                          <StackPanel>
+                            <TextBlock Text="📱 ПРОДАВЕЦ (Предложение 999.md)" FontSize="11" FontWeight="Bold" Foreground="{StaticResource Accent}" Margin="0,0,0,4" />
+                            <TextBlock Text="{Binding SupplyTitle}" FontSize="13" FontWeight="SemiBold" Foreground="{StaticResource TextMain}" TextWrapping="Wrap" MaxHeight="36" TextTrimming="CharacterEllipsis" />
+                            <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+                              <TextBlock Text="Цена продавца: " FontSize="12" Foreground="{StaticResource TextSub}" />
+                              <TextBlock FontSize="14" FontWeight="Bold" Foreground="{StaticResource Danger}">
+                                <Run Text="{Binding SupplyPrice, StringFormat={}{0:F0}}" /> <Run Text=" lei" FontSize="11" />
+                              </TextBlock>
+                            </StackPanel>
+                            <TextBlock Text="{Binding SupplyBrand, StringFormat='Модель: {0}'}" FontSize="11" Foreground="{StaticResource TextSub}" Margin="0,2,0,0" />
+                            <Button Content="🔗 Открыть Продам" Style="{StaticResource BtnSm}" Height="24" Padding="8,0" FontSize="11" Margin="0,6,0,0" HorizontalAlignment="Left" Command="{Binding DataContext.OpenUrlCommand, RelativeSource={RelativeSource AncestorType=ItemsControl}}" CommandParameter="{Binding SupplyUrl}" />
+                          </StackPanel>
+                        </Border>
+
+                        <!-- Actions -->
+                        <StackPanel Grid.Column="3" VerticalAlignment="Center" Margin="12,0,0,0">
+                          <Button Content="🚫 В Чёрный список" Style="{StaticResource BtnSm}" Background="{StaticResource Danger}" Foreground="White" Height="28" Padding="8,0" FontSize="11" Command="{Binding DataContext.BlacklistDemandAuthorCommand, RelativeSource={RelativeSource AncestorType=ItemsControl}}" CommandParameter="{Binding}" />
+                        </StackPanel>
+                      </Grid>
+                    </Border>
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
+            </StackPanel>
+          </ScrollViewer>
         </Grid>
       </TabItem>
       <TabItem Header="📋 Лог" Style="{StaticResource TI}">

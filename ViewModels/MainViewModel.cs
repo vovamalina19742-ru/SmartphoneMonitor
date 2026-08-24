@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Diagnostics;
+using System.IO;
 using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Threading;
@@ -10,25 +11,30 @@ using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Threading;
 using System.Media;
+using Newtonsoft.Json;
 using SmartphoneMonitor.Models;
 using SmartphoneMonitor.Services;
 using SmartphoneMonitor.Views;
 
 namespace SmartphoneMonitor.ViewModels
 {
-    public class MainViewModel : INotifyPropertyChanged
+    public class MainViewModel : INotifyPropertyChanged, IDisposable
     {
         private readonly WebScraperService _scraperService;
         private readonly DataAnalysisService _analysisService;
         private readonly DatabaseService _databaseService;
         private readonly ExchangeRateService _exchangeRateService;
         private readonly TelegramNotificationService _telegramService;
+        private readonly MatchingClientService _matchingClientService;
         private readonly DispatcherTimer _autoMonitorTimer;
         private readonly Dispatcher _dispatcher;
         private readonly Random _random = new Random();
+        private readonly ReaderWriterLockSlim _resultLock = new ReaderWriterLockSlim();
 
         private List<Listing>? _allScrapedListings;
         private CancellationTokenSource? _cts;
+        private bool _isAutoRunInProgress;
+        private bool _disposed;
 
         private bool _isBusy;
         private string _status = "Готов к работе";
@@ -37,21 +43,59 @@ namespace SmartphoneMonitor.ViewModels
         private bool _isAutoMonitoring;
         private string _selectedIntervalString = "5 минут";
 
+        private string _geminiApiKey = string.Empty;
         private string _telegramToken = string.Empty;
         private string _telegramChatId = string.Empty;
         private bool _telegramEnabled;
         private bool _soundAlertEnabled = true;
 
         private AnalysisResult _result = new AnalysisResult();
+
+        public AnalysisResult Result
+        {
+            get
+            {
+                _resultLock.EnterReadLock();
+                try
+                {
+                    return _result;
+                }
+                finally
+                {
+                    _resultLock.ExitReadLock();
+                }
+            }
+            set
+            {
+                _resultLock.EnterWriteLock();
+                try
+                {
+                    _result = value;
+                }
+                finally
+                {
+                    _resultLock.ExitWriteLock();
+                }
+                OnPropertyChanged(nameof(HasResult));
+                OnPropertyChanged(nameof(HasViewsData));
+                OnPropertyChanged(nameof(HasHotDeals));
+                OnPropertyChanged(nameof(HasChronicSellers));
+                UpdateBrandFilterOptions();
+                RefreshFilteredLists();
+            }
+        }
+
         private bool _sortByViews;
         private int _minViews;
-        
+
         private string _selectedBrandFilter = "Все бренды";
         private string _searchKeyword = string.Empty;
         private string _selectedSortOption = "По умолчанию";
-        
+
         private string _newBlacklistNumber = string.Empty;
         private string _newBlacklistReason = string.Empty;
+        private string _newBlacklistLogin = string.Empty;
+        private string _newBlacklistLoginReason = string.Empty;
         private double _progress;
         private string _summaryText = "Ожидание запуска...";
 
@@ -66,6 +110,7 @@ namespace SmartphoneMonitor.ViewModels
                 {
                     OnPropertyChanged(nameof(IsReady));
                     StartCommand.Raise();
+                    CancelCommand.Raise();
                 }
             }
         }
@@ -131,6 +176,12 @@ namespace SmartphoneMonitor.ViewModels
             }
         }
 
+        public string GeminiApiKey
+        {
+            get => _geminiApiKey;
+            set => SetProperty(ref _geminiApiKey, value);
+        }
+
         public string TelegramToken
         {
             get => _telegramToken;
@@ -159,23 +210,6 @@ namespace SmartphoneMonitor.ViewModels
         {
             "5 минут", "10 минут", "15 минут", "30 минут", "60 минут"
         };
-
-        public AnalysisResult Result
-        {
-            get => _result;
-            set
-            {
-                if (SetProperty(ref _result, value))
-                {
-                    OnPropertyChanged(nameof(HasResult));
-                    OnPropertyChanged(nameof(HasViewsData));
-                    OnPropertyChanged(nameof(HasHotDeals));
-                    OnPropertyChanged(nameof(HasChronicSellers));
-                    UpdateBrandFilterOptions();
-                    RefreshFilteredLists();
-                }
-            }
-        }
 
         public bool HasResult => Result != null && Result.TotalListings > 0;
         public bool HasViewsData => HasResult && Result.AllPrivateListings.Any(l => l.Views > 0);
@@ -275,7 +309,20 @@ namespace SmartphoneMonitor.ViewModels
             set => SetProperty(ref _newBlacklistReason, value);
         }
 
+        public string NewBlacklistLogin
+        {
+            get => _newBlacklistLogin;
+            set => SetProperty(ref _newBlacklistLogin, value);
+        }
+
+        public string NewBlacklistLoginReason
+        {
+            get => _newBlacklistLoginReason;
+            set => SetProperty(ref _newBlacklistLoginReason, value);
+        }
+
         public ObservableCollection<BlacklistEntry> Blacklist { get; } = new ObservableCollection<BlacklistEntry>();
+        public ObservableCollection<BlacklistLoginEntry> BlacklistLogins { get; } = new ObservableCollection<BlacklistLoginEntry>();
         public ObservableCollection<string> Log { get; } = new ObservableCollection<string>();
 
         public double Progress
@@ -301,6 +348,15 @@ namespace SmartphoneMonitor.ViewModels
         public RelayCommand SetMinViewsCommand { get; }
         public RelayCommand SaveSettingsCommand { get; }
         public RelayCommand TestTelegramCommand { get; }
+        public RelayCommand UpdateRetailPricesCommand { get; }
+        public RelayCommand OpenPriceAnalysisCommand { get; }
+        public RelayCommand AddBlacklistLoginCommand { get; }
+        public RelayCommand RemoveBlacklistLoginCommand { get; }
+        public RelayCommand RunVisionAnalysisCommand { get; }
+        public RelayCommand RefreshDemandArbitrageCommand { get; }
+        public RelayCommand BlacklistDemandAuthorCommand { get; }
+
+        public ObservableCollection<DemandArbitrageDeal> DemandArbitrageDeals { get; } = new ObservableCollection<DemandArbitrageDeal>();
 
         public MainViewModel()
         {
@@ -310,13 +366,9 @@ namespace SmartphoneMonitor.ViewModels
             _databaseService = new DatabaseService();
             _exchangeRateService = new ExchangeRateService();
             _telegramService = new TelegramNotificationService();
-            _telegramService.BlacklistRequested += (phone, reason) =>
-            {
-                _dispatcher.Invoke(() =>
-                {
-                    AddPhoneToBlacklist(phone, reason);
-                });
-            };
+            _matchingClientService = new MatchingClientService();
+            _telegramService.BlacklistRequested += OnBlacklistRequested;
+            _telegramService.BlacklistLoginRequested += OnBlacklistLoginRequested;
 
             _autoMonitorTimer = new DispatcherTimer();
             _autoMonitorTimer.Tick += OnAutoMonitorTick;
@@ -351,6 +403,23 @@ namespace SmartphoneMonitor.ViewModels
                 }
             });
 
+            OpenPriceAnalysisCommand = new RelayCommand(p =>
+            {
+                if (p is HotDeal deal)
+                {
+                    try
+                    {
+                        var history = _databaseService.GetPriceHistoryForBrandAndModel(deal.Brand, deal.Title, deal.StorageGB);
+                        var win = new Views.PriceAnalysisWindow(deal.Brand, deal.Title, deal.StorageGB, history);
+                        win.ShowDialog();
+                    }
+                    catch (Exception ex)
+                    {
+                        LogMessage($"❌ Ошибка открытия аналитики цен: {ex.Message}");
+                    }
+                }
+            });
+
             AddToBlacklistCommand = new RelayCommand(p =>
             {
                 if (p is ChronicSeller seller)
@@ -377,6 +446,24 @@ namespace SmartphoneMonitor.ViewModels
                 }
             });
 
+            AddBlacklistLoginCommand = new RelayCommand(p =>
+            {
+                if (!string.IsNullOrWhiteSpace(NewBlacklistLogin))
+                {
+                    AddLoginToBlacklist(NewBlacklistLogin.Trim(), NewBlacklistLoginReason.Trim());
+                    NewBlacklistLogin = string.Empty;
+                    NewBlacklistLoginReason = string.Empty;
+                }
+            });
+
+            RemoveBlacklistLoginCommand = new RelayCommand(p =>
+            {
+                if (p is BlacklistLoginEntry entry)
+                {
+                    RemoveLoginFromBlacklist(entry.Login);
+                }
+            });
+
             SetMinViewsCommand = new RelayCommand(p =>
             {
                 if (p != null && int.TryParse(p.ToString(), out int min))
@@ -385,7 +472,7 @@ namespace SmartphoneMonitor.ViewModels
                 }
             });
 
-            SaveSettingsCommand = new RelayCommand(p =>
+            SaveSettingsCommand = new RelayCommand(async p =>
             {
                 try
                 {
@@ -393,15 +480,29 @@ namespace SmartphoneMonitor.ViewModels
                     _databaseService.SaveSetting("TelegramChatId", TelegramChatId);
                     _databaseService.SaveSetting("TelegramEnabled", TelegramEnabled.ToString());
                     _databaseService.SaveSetting("SoundAlertEnabled", SoundAlertEnabled.ToString());
-                    LogMessage("💾 Настройки успешно сохранены!");
+                    _databaseService.SaveSetting("GeminiApiKey", GeminiApiKey);
+                    LogMessage("💾 Настройки сохранены!");
 
-                    if (TelegramEnabled)
+                    if (TelegramEnabled && !string.IsNullOrEmpty(TelegramToken) && !string.IsNullOrEmpty(TelegramChatId))
                     {
-                        _telegramService.StartPolling(TelegramToken, TelegramChatId);
+                        LogMessage("🧪 Проверка Telegram-токена...");
+                        bool ok = await _telegramService.SendTestMessageAsync(TelegramToken, TelegramChatId);
+                        if (ok)
+                        {
+                            LogMessage("✅ Telegram-бот работает! Отправлено тестовое сообщение.");
+                            _telegramService.StartPolling(TelegramToken, TelegramChatId);
+                        }
+                        else
+                        {
+                            LogMessage("❌ Ошибка: не удалось отправить тестовое сообщение. Проверьте Token и Chat ID.");
+                            LogMessage("💡 Убедитесь, что вы написали боту /start и у бота нет ограничений.");
+                        }
                     }
                     else
                     {
                         _telegramService.StopPolling();
+                        if (TelegramEnabled)
+                            LogMessage("⚠️ Telegram включен, но Token или Chat ID не указаны.");
                     }
                 }
                 catch (Exception ex)
@@ -421,6 +522,16 @@ namespace SmartphoneMonitor.ViewModels
                 else
                 {
                     LogMessage("❌ Ошибка отправки тестового сообщения. Проверьте Token и Chat ID.");
+                }
+            });
+
+            UpdateRetailPricesCommand = new RelayCommand(async p => await RunUpdateRetailPricesAsync(), p => !IsBusy);
+
+            RunVisionAnalysisCommand = new RelayCommand(async p =>
+            {
+                if (p is HotDeal deal)
+                {
+                    await RunVisionAnalysisAsync(deal);
                 }
             });
 
@@ -452,15 +563,50 @@ namespace SmartphoneMonitor.ViewModels
                 _databaseService.SaveSetting("EurToMdl", rate.ToString(System.Globalization.CultureInfo.InvariantCulture));
                 LogMessage($"🏦 Загружен курс НБМ: 1 EUR = {rate:F4} MDL");
             });
+
+            RefreshDemandArbitrageCommand = new RelayCommand(async _ => await RunDemandArbitrageAsync());
+            BlacklistDemandAuthorCommand = new RelayCommand(param =>
+            {
+                if (param is DemandArbitrageDeal deal)
+                {
+                    if (!string.IsNullOrEmpty(deal.DemandAuthor))
+                    {
+                        _databaseService.AddBlacklistLogin(deal.DemandAuthor, "Черный список Арбитража");
+                        AddLoginToBlacklist(deal.DemandAuthor, "Черный список Арбитража");
+                    }
+                    if (!string.IsNullOrEmpty(deal.DemandPhone))
+                    {
+                        _databaseService.AddBlacklist(deal.DemandPhone, "Черный список Арбитража");
+                        AddPhoneToBlacklist(deal.DemandPhone, "Черный список Арбитража");
+                    }
+                    _dispatcher.Invoke(() => DemandArbitrageDeals.Remove(deal));
+                }
+            });
+        }
+
+        private void OnBlacklistRequested(string phone, string reason)
+        {
+            _dispatcher.Invoke(() => AddPhoneToBlacklist(phone, reason));
+        }
+
+        private void OnBlacklistLoginRequested(string login, string reason)
+        {
+            _dispatcher.Invoke(() => AddLoginToBlacklist(login, reason));
         }
 
         private void CancelScan()
         {
-            if (_cts != null && !_cts.IsCancellationRequested)
+            var cts = _cts;
+            if (cts != null && !cts.IsCancellationRequested)
             {
-                _cts.Cancel();
-                LogMessage("⏹️ Сканирование отменено пользователем.");
-                Status = "Отмена...";
+                try
+                {
+                    cts.Cancel();
+                    LogMessage("⏹️ Сканирование отменено пользователем.");
+                    Status = "Отмена...";
+                }
+                catch (ObjectDisposedException) { }
+                catch (AggregateException) { }
             }
         }
 
@@ -473,6 +619,12 @@ namespace SmartphoneMonitor.ViewModels
                 foreach (var entry in savedBlacklist)
                 {
                     Blacklist.Add(entry);
+                }
+
+                var savedLogins = _databaseService.GetBlacklistLogins();
+                foreach (var entry in savedLogins)
+                {
+                    BlacklistLogins.Add(entry);
                 }
 
                 // EUR Rate
@@ -494,11 +646,13 @@ namespace SmartphoneMonitor.ViewModels
                 _telegramChatId = _databaseService.GetSetting("TelegramChatId", string.Empty);
                 _telegramEnabled = bool.TryParse(_databaseService.GetSetting("TelegramEnabled", "false"), out bool tgEnabled) && tgEnabled;
                 _soundAlertEnabled = bool.TryParse(_databaseService.GetSetting("SoundAlertEnabled", "true"), out bool sndEnabled) && sndEnabled;
+                _geminiApiKey = _databaseService.GetSetting("GeminiApiKey", string.Empty);
 
                 OnPropertyChanged(nameof(TelegramToken));
                 OnPropertyChanged(nameof(TelegramChatId));
                 OnPropertyChanged(nameof(TelegramEnabled));
                 OnPropertyChanged(nameof(SoundAlertEnabled));
+                OnPropertyChanged(nameof(GeminiApiKey));
 
                 UpdateAutoMonitorState();
             }
@@ -515,10 +669,20 @@ namespace SmartphoneMonitor.ViewModels
             {
                 _autoMonitorTimer.Interval = GetAutoMonitorInterval();
                 _autoMonitorTimer.Start();
-                LogMessage($"⏱️ Авто-мониторинг запущен с интервалом {_selectedIntervalString}");
+                LogMessage($"⏱️ Авто-мониторинг запущен с интервал {_selectedIntervalString}");
             }
             else
             {
+                var cts = _cts;
+                if (_isAutoRunInProgress && cts != null && !cts.IsCancellationRequested)
+                {
+                    try
+                    {
+                        cts.Cancel();
+                        LogMessage("⏹️ Отключение авто-мониторинга: текущий цикл отменяется.");
+                    }
+                    catch (ObjectDisposedException) { }
+                }
                 LogMessage("⏱️ Авто-мониторинг отключен");
             }
         }
@@ -542,6 +706,10 @@ namespace SmartphoneMonitor.ViewModels
                     LogMessage("⏱️ Очередной цикл авто-мониторинга пропущен (система занята).");
                     return;
                 }
+                if (!IsAutoMonitoring)
+                {
+                    return;
+                }
                 LogMessage("⏱️ Запуск фонового авто-мониторинга...");
                 await RunAnalysisAsync(isAutoRun: true);
             }
@@ -553,6 +721,14 @@ namespace SmartphoneMonitor.ViewModels
 
         private async Task RunAnalysisAsync(bool isAutoRun = false)
         {
+            // Proactively collect garbage on start to keep memory utilization minimal on weak CPUs
+            try
+            {
+                GC.Collect();
+                GC.WaitForPendingFinalizers();
+            }
+            catch { }
+
             IsBusy = true;
             Progress = 0;
             Status = isAutoRun ? "Авто-мониторинг..." : "Сбор данных...";
@@ -568,7 +744,9 @@ namespace SmartphoneMonitor.ViewModels
                 });
             });
 
+            _cts?.Dispose();
             _cts = new CancellationTokenSource();
+            _isAutoRunInProgress = isAutoRun;
             var token = _cts.Token;
 
             try
@@ -577,7 +755,7 @@ namespace SmartphoneMonitor.ViewModels
                 var preRunHistory = _databaseService.GetPriceHistory();
 
                 var rawListings = await Task.Run(() => _scraperService.ScrapeSmartphonesAsync(MaxPages, Constants.EurToMdl, progressReporter, token), token);
-                
+
                 token.ThrowIfCancellationRequested();
                 _allScrapedListings = rawListings;
 
@@ -593,42 +771,45 @@ namespace SmartphoneMonitor.ViewModels
                 {
                     int total = rawListings.Count;
                     int processed = 0;
-                    var semaphore = new SemaphoreSlim(3);
-                    var tasks = rawListings.Select(async l =>
+                    using (var semaphore = new SemaphoreSlim(2))
                     {
-                        await semaphore.WaitAsync(token);
-                        try
+                        var tasks = rawListings.Select(async l =>
                         {
-                            token.ThrowIfCancellationRequested();
-                            // Add a random delay to prevent concurrent burst requests
-                            await Task.Delay(_random.Next(200, 600), token);
-                            var details = await _scraperService.FetchPhoneAsync(l.Url, token);
-                            l.PhoneNumber = details.phone;
-                            l.SellerName = details.seller;
-                            l.Description = details.description;
-                            if (details.views > 0)
+                            await semaphore.WaitAsync(token);
+                            try
                             {
-                                l.Views = details.views;
+                                token.ThrowIfCancellationRequested();
+                                // Add a human-like delay to prevent concurrent burst requests (2.5 to 4.5 seconds)
+                                await Task.Delay(_random.Next(2500, 4500), token);
+                                var details = await _scraperService.FetchPhoneAsync(l.Url, token);
+                                l.PhoneNumber = details.phone;
+                                l.SellerName = details.seller;
+                                l.Description = details.description;
+                                l.ImageUrls = details.images;
+                                if (details.views > 0)
+                                {
+                                    l.Views = details.views;
+                                }
                             }
-                        }
-                        catch (OperationCanceledException)
-                        {
-                            throw;
-                        }
-                        catch { }
-                        finally
-                        {
-                            semaphore.Release();
-                            int current = Interlocked.Increment(ref processed);
-                            _dispatcher.Invoke(() =>
+                            catch (OperationCanceledException)
                             {
-                                Progress = (double)current * 100.0 / total;
-                                Status = $"Сбор контактов: {current}/{total}...";
-                            });
-                        }
-                    }).ToArray();
+                                throw;
+                            }
+                            catch { }
+                            finally
+                            {
+                                semaphore.Release();
+                                int current = Interlocked.Increment(ref processed);
+                                _dispatcher.Invoke(() =>
+                                {
+                                    Progress = (double)current * 100.0 / total;
+                                    Status = $"Сбор контактов: {current}/{total}...";
+                                });
+                            }
+                        }).ToArray();
 
-                    await Task.WhenAll(tasks);
+                        await Task.WhenAll(tasks);
+                    }
                 }
 
                 token.ThrowIfCancellationRequested();
@@ -639,9 +820,18 @@ namespace SmartphoneMonitor.ViewModels
                 // Run data analysis
                 Status = "Анализ данных...";
                 var blacklistPhones = Blacklist.Select(b => b.PhoneNumber).ToList();
-                var analysisResult = await Task.Run(() => _analysisService.Analyze(rawListings, blacklistPhones, preRunHistory), token);
+                var blacklistLogins = BlacklistLogins.Select(b => b.Login).ToList();
+                var analysisResult = await Task.Run(() => _analysisService.Analyze(rawListings, blacklistPhones, blacklistLogins, preRunHistory), token);
 
                 Result = analysisResult;
+                await RunDemandArbitrageAsync();
+
+                // Export Apple & Xiaomi listings to CSV history for Google Drive Sync
+                try
+                {
+                    await Task.Run(() => _databaseService.ExportListingsToCsv(analysisResult.AllPrivateListings), token);
+                }
+                catch { }
 
                 // Build views distribution chart buckets
                 UpdateViewsDistribution(analysisResult.AllPrivateListings);
@@ -673,19 +863,37 @@ namespace SmartphoneMonitor.ViewModels
                         catch { }
                     }
 
-                    if (TelegramEnabled && !string.IsNullOrEmpty(TelegramToken))
+                    if (TelegramEnabled)
                     {
-                        foreach (var deal in newDeals)
+                        if (string.IsNullOrEmpty(TelegramToken) || string.IsNullOrEmpty(TelegramChatId))
                         {
-                            var d = deal;
-                            _ = Task.Run(async () =>
+                            LogMessage("⚠️ [Telegram] Уведомления включены, но TelegramToken или TelegramChatId не заполнены в Настройках!");
+                        }
+                        else
+                        {
+                            LogMessage($"📢 [Telegram] Отправка {newDeals.Count} новых горячих сделок в Telegram...");
+                            foreach (var deal in newDeals)
                             {
-                                try
+                                var d = deal;
+                                _ = Task.Run(async () =>
                                 {
-                                    await _telegramService.SendHotDealNotificationAsync(TelegramToken, TelegramChatId, d);
-                                }
-                                catch { }
-                            });
+                                    try
+                                    {
+                                        bool sent = await _telegramService.SendHotDealNotificationAsync(TelegramToken, TelegramChatId, d);
+                                        _dispatcher.Invoke(() =>
+                                        {
+                                            if (sent)
+                                                LogMessage($"✅ [Telegram] Сделка '{d.Title}' успешно отправлена в Telegram!");
+                                            else
+                                                LogMessage($"❌ [Telegram] Ошибка отправки сделки '{d.Title}'. Проверьте Token и Chat ID.");
+                                        });
+                                    }
+                                    catch (Exception ex)
+                                    {
+                                        _dispatcher.Invoke(() => LogMessage($"❌ [Telegram] Исключение при отправке: {ex.Message}"));
+                                    }
+                                });
+                            }
                         }
                     }
                 }
@@ -705,6 +913,7 @@ namespace SmartphoneMonitor.ViewModels
             }
             finally
             {
+                _isAutoRunInProgress = false;
                 IsBusy = false;
                 Progress = 0;
                 Status = "Готов к работе";
@@ -808,20 +1017,17 @@ namespace SmartphoneMonitor.ViewModels
 
                 var query = Result.AllPrivateListings.AsEnumerable();
 
-                // Brand filter
                 if (SelectedBrandFilter != "Все бренды")
                 {
                     query = query.Where(l => l.Brand == SelectedBrandFilter);
                 }
 
-                // Keyword search
                 if (!string.IsNullOrWhiteSpace(SearchKeyword))
                 {
                     string k = SearchKeyword.Trim().ToLowerInvariant();
                     query = query.Where(l => l.Title.ToLowerInvariant().Contains(k) || l.Description.ToLowerInvariant().Contains(k) || l.Model.ToLowerInvariant().Contains(k));
                 }
 
-                // Sort option
                 query = SelectedSortOption switch
                 {
                     "Сначала дешевые" => query.OrderBy(l => l.PriceValue),
@@ -842,12 +1048,12 @@ namespace SmartphoneMonitor.ViewModels
         {
             try
             {
-                string norm = DataAnalysisService.NormalizePhone(phone);
+                string norm = ListingClassifier.NormalizePhone(phone);
                 if (string.IsNullOrEmpty(norm)) return;
 
                 _dispatcher.Invoke(() =>
                 {
-                    if (Blacklist.Any(b => DataAnalysisService.NormalizePhone(b.PhoneNumber) == norm))
+                    if (Blacklist.Any(b => ListingClassifier.NormalizePhone(b.PhoneNumber) == norm))
                     {
                         LogMessage($"⚠️ Номер {phone} уже в черном списке.");
                         return;
@@ -867,16 +1073,7 @@ namespace SmartphoneMonitor.ViewModels
 
                 if (Result != null && _allScrapedListings != null)
                 {
-                    Task.Run(() =>
-                    {
-                        var blacklistPhones = _dispatcher.Invoke(() => Blacklist.Select(b => b.PhoneNumber).ToList());
-                        var analysisResult = _analysisService.Analyze(_allScrapedListings, blacklistPhones, _databaseService.GetPriceHistory());
-                        _dispatcher.Invoke(() =>
-                        {
-                            Result = analysisResult;
-                            UpdateViewsDistribution(analysisResult.AllPrivateListings);
-                        });
-                    });
+                    _ = RefreshAnalysisWithCurrentBlacklistsAsync();
                 }
             }
             catch (Exception ex)
@@ -904,22 +1101,98 @@ namespace SmartphoneMonitor.ViewModels
 
                 if (Result != null && _allScrapedListings != null)
                 {
-                    Task.Run(() =>
-                    {
-                        var blacklistPhones = _dispatcher.Invoke(() => Blacklist.Select(b => b.PhoneNumber).ToList());
-                        var analysisResult = _analysisService.Analyze(_allScrapedListings, blacklistPhones, _databaseService.GetPriceHistory());
-                        _dispatcher.Invoke(() =>
-                        {
-                            Result = analysisResult;
-                            UpdateViewsDistribution(analysisResult.AllPrivateListings);
-                        });
-                    });
+                    _ = RefreshAnalysisWithCurrentBlacklistsAsync();
                 }
             }
             catch (Exception ex)
             {
                 LogMessage($"⚠️ Ошибка удаления из ЧС: {ex.Message}");
             }
+        }
+
+        private void AddLoginToBlacklist(string login, string reason)
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(login)) return;
+
+                _dispatcher.Invoke(() =>
+                {
+                    if (BlacklistLogins.Any(b => b.Login.Equals(login, StringComparison.OrdinalIgnoreCase)))
+                    {
+                        LogMessage($"⚠️ Логин {login} уже в черном списке.");
+                        return;
+                    }
+
+                    _databaseService.AddBlacklistLogin(login, reason);
+                    BlacklistLogins.Add(new BlacklistLoginEntry
+                    {
+                        Login = login,
+                        Reason = reason,
+                        DateAdded = DateTime.Now
+                    });
+
+                    LogMessage($"🚫 Добавлен в ЧС логинов: {login} ({reason})");
+                    OnPropertyChanged(nameof(BlacklistLogins));
+                });
+
+                if (Result != null && _allScrapedListings != null)
+                {
+                    _ = RefreshAnalysisWithCurrentBlacklistsAsync();
+                }
+            }
+            catch (Exception ex)
+            {
+                LogMessage($"⚠️ Ошибка добавления логина в ЧС: {ex.Message}");
+            }
+        }
+
+        private void RemoveLoginFromBlacklist(string login)
+        {
+            try
+            {
+                _dispatcher.Invoke(() =>
+                {
+                    _databaseService.RemoveBlacklistLogin(login);
+                    var entry = BlacklistLogins.FirstOrDefault(b => b.Login.Equals(login, StringComparison.OrdinalIgnoreCase));
+                    if (entry != null)
+                    {
+                        BlacklistLogins.Remove(entry);
+                    }
+
+                    LogMessage($"✅ Удален из ЧС логинов: {login}");
+                    OnPropertyChanged(nameof(BlacklistLogins));
+                });
+
+                if (Result != null && _allScrapedListings != null)
+                {
+                    _ = RefreshAnalysisWithCurrentBlacklistsAsync();
+                }
+            }
+            catch (Exception ex)
+            {
+                LogMessage($"⚠️ Ошибка удаления логина из ЧС: {ex.Message}");
+            }
+        }
+
+        private async Task RefreshAnalysisWithCurrentBlacklistsAsync()
+        {
+            if (_allScrapedListings == null)
+            {
+                return;
+            }
+
+            await Task.Run(() =>
+            {
+                var blacklistPhones = _dispatcher.Invoke(() => Blacklist.Select(b => b.PhoneNumber).ToList());
+                var blacklistLogins = _dispatcher.Invoke(() => BlacklistLogins.Select(b => b.Login).ToList());
+                var analysisResult = _analysisService.Analyze(_allScrapedListings, blacklistPhones, blacklistLogins, _databaseService.GetPriceHistory());
+                _dispatcher.Invoke(() =>
+                {
+                    Result = analysisResult;
+                    UpdateViewsDistribution(analysisResult.AllPrivateListings);
+                });
+            });
         }
 
         private void LogMessage(string message)
@@ -946,9 +1219,312 @@ namespace SmartphoneMonitor.ViewModels
             return true;
         }
 
-        private void OnPropertyChanged([CallerMemberName] string? propertyName = null)
+        private async Task NotifyTopRetailDiscountsAsync()
+        {
+            if (!TelegramEnabled || string.IsNullOrEmpty(TelegramToken) || string.IsNullOrEmpty(TelegramChatId))
+            {
+                return;
+            }
+
+            try
+            {
+                string baseDir = AppDomain.CurrentDomain.BaseDirectory;
+                string jsonPath = Path.Combine(baseDir, "reports", "retail_promo_prices.json");
+                if (!File.Exists(jsonPath))
+                {
+                    jsonPath = Path.Combine(Directory.GetCurrentDirectory(), "reports", "retail_promo_prices.json");
+                }
+                if (!File.Exists(jsonPath)) return;
+
+                string jsonContent = await File.ReadAllTextAsync(jsonPath);
+                var allPromos = JsonConvert.DeserializeObject<List<RetailPromoPrice>>(jsonContent);
+                if (allPromos == null || allPromos.Count == 0) return;
+
+                var topPromos = allPromos
+                    .Where(p => p.Price <= 5000m && p.Discount >= 500m)
+                    .OrderByDescending(p => p.Discount)
+                    .Take(10)
+                    .ToList();
+
+                if (topPromos.Count == 0) return;
+
+                var sb = new System.Text.StringBuilder();
+                sb.AppendLine("🛍️ <b>ТОП-10 ГОРЯЧИХ СКИДОК В МАГАЗИНАХ!</b> 📱");
+                sb.AppendLine($"<i>База успешно обновлена. Всего найдено акций: {allPromos.Count}</i>\n");
+
+                int idx = 1;
+                foreach (var p in topPromos)
+                {
+                    decimal percent = p.OldPrice > 0 ? (p.Discount / p.OldPrice) * 100m : 0m;
+                    string shopEmoji = p.Shop.ToLower() switch
+                    {
+                        "orange" => "🍊",
+                        "moldcell" => "🍇",
+                        "darwin" => "🐒",
+                        "enter" => "💻",
+                        "maximum" => "🔥",
+                        "bomba" => "💣",
+                        _ => "🛒"
+                    };
+
+                    sb.AppendLine($"{idx}. {shopEmoji} <b>{p.Shop}:</b> <a href=\"{p.Url}\">{p.Brand} {p.Name}</a>");
+                    sb.AppendLine($"   🏷️ <b>Цена:</b> {p.Price:F0} MDL <s>{p.OldPrice:F0} MDL</s> (<b>Скидка: -{p.Discount:F0} MDL</b> | -{percent:F0}%)");
+                    sb.AppendLine();
+                    idx++;
+                }
+
+                await _telegramService.SendTextMessageAsync(TelegramToken, TelegramChatId, sb.ToString());
+                _dispatcher.Invoke(new Action(() => LogMessage($"📢 Отправлен отчет о лучших скидках в Telegram! (топ-{topPromos.Count})")));
+            }
+            catch (Exception ex)
+            {
+                _dispatcher.Invoke(new Action(() => LogMessage($"⚠️ Ошибка отправки скидок в Telegram: {ex.Message}")));
+            }
+        }
+
+        private async Task RunUpdateRetailPricesAsync()
+        {
+            IsBusy = true;
+            Status = "Сбор цен крупных магазинов...";
+            LogMessage("🛍️ Запуск обновления цен Darwin и Enter...");
+
+            try
+            {
+                string baseDir = AppDomain.CurrentDomain.BaseDirectory;
+                string[] candidatePaths = new[]
+                {
+                    Path.Combine(baseDir, "scripts", "scrape_retail.js"),
+                    Path.Combine(Directory.GetCurrentDirectory(), "scripts", "scrape_retail.js"),
+                    Path.Combine(Directory.GetCurrentDirectory(), "..", "scripts", "scrape_retail.js"),
+                    Path.GetFullPath(Path.Combine(baseDir, "..", "..", "..", "..", "scripts", "scrape_retail.js")),
+                    Path.GetFullPath(Path.Combine(baseDir, "..", "scripts", "scrape_retail.js"))
+                };
+
+                string? scriptPath = candidatePaths.FirstOrDefault(File.Exists);
+
+                if (string.IsNullOrEmpty(scriptPath))
+                {
+                    LogMessage("❌ Ошибка: скрипт scrape_retail.js не найден.");
+                    return;
+                }
+
+                string nodePath = @"C:\Program Files\nodejs\node.exe";
+                if (!File.Exists(nodePath))
+                {
+                    nodePath = "node";
+                }
+
+                await Task.Run(() =>
+                {
+                    var startInfo = new System.Diagnostics.ProcessStartInfo
+                    {
+                        FileName = nodePath,
+                        Arguments = $"\"{scriptPath}\"",
+                        RedirectStandardOutput = true,
+                        RedirectStandardError = true,
+                        UseShellExecute = false,
+                        CreateNoWindow = true
+                    };
+
+                    using (var process = System.Diagnostics.Process.Start(startInfo))
+                    {
+                        if (process == null)
+                        {
+                            _dispatcher.Invoke(() => LogMessage("❌ Не удалось запустить процесс Node.js."));
+                            return;
+                        }
+
+                        string output = process.StandardOutput.ReadToEnd();
+                        string error = process.StandardError.ReadToEnd();
+                        process.WaitForExit();
+
+                        if (process.ExitCode == 0)
+                        {
+                            _dispatcher.Invoke(() => LogMessage("🛍️ Цены магазинов успешно обновлены!"));
+                            _ = Task.Run(async () => await NotifyTopRetailDiscountsAsync());
+                        }
+                        else
+                        {
+                            _dispatcher.Invoke(() => LogMessage($"❌ Ошибка парсера магазинов:\n{error}"));
+                        }
+                    }
+                });
+            }
+            catch (Exception ex)
+            {
+                LogMessage($"❌ Ошибка запуска парсера магазинов: {ex.Message}");
+            }
+            finally
+            {
+                IsBusy = false;
+                Status = "Готов к работе";
+            }
+        }
+
+        protected virtual void OnPropertyChanged([System.Runtime.CompilerServices.CallerMemberName] string propertyName = null)
         {
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
+        }
+
+        private async Task RunVisionAnalysisAsync(HotDeal deal)
+        {
+            if (string.IsNullOrEmpty(GeminiApiKey))
+            {
+                LogMessage("❌ Ошибка: Введите ключ Gemini API в настройках!");
+                return;
+            }
+
+            if (deal.ImageUrls == null || deal.ImageUrls.Count == 0)
+            {
+                // 1. Check SQLite database cache first
+                var cachedImages = _databaseService.GetCachedImageUrls(deal.Url);
+                if (cachedImages != null && cachedImages.Count > 0)
+                {
+                    deal.ImageUrls = cachedImages;
+                    LogMessage($"[SQLite Cache] Извлечено {deal.ImageUrls.Count} фото из базы данных для '{deal.Title}'.");
+                }
+                else
+                {
+                    // 2. Fetch directly using multi-source listing image parser
+                    LogMessage($"🔍 Загрузка фотографий для '{deal.Title}' по URL: {deal.Url}...");
+                    try
+                    {
+                        IsBusy = true;
+                        var fetchedImages = await _scraperService.FetchListingImagesAsync(deal.Url);
+                        if (fetchedImages != null && fetchedImages.Count > 0)
+                        {
+                            deal.ImageUrls = fetchedImages;
+                            // Save to SQLite so subsequent runs don't re-fetch
+                            _databaseService.SavePriceHistory(new List<Listing>
+                            {
+                                new Listing
+                                {
+                                    Url = deal.Url,
+                                    Title = deal.Title,
+                                    Brand = deal.Brand,
+                                    StorageGB = deal.StorageGB,
+                                    PriceValue = deal.PriceValue,
+                                    ImageUrls = deal.ImageUrls
+                                }
+                            });
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        LogMessage($"⚠️ Не удалось подгрузить фото с сайта: {ex.Message}");
+                    }
+                }
+            }
+
+            if (deal.ImageUrls == null || deal.ImageUrls.Count == 0)
+            {
+                LogMessage($"❌ [Parser] Объявление {deal.Title}: фото не найдено.");
+                return;
+            }
+
+            LogMessage($"[Parser] Объявление {deal.Title}: найдено фото - {deal.ImageUrls.Count}");
+
+            try
+            {
+                IsBusy = true;
+                LogMessage($"👁️ Запуск Визуального ИИ-Арбитра для '{deal.Title}' ({deal.ImageUrls.Count} фото)...");
+                
+                var visionService = new SmartphoneMonitor.Services.AIVisionService();
+                string result = await visionService.AnalyzeImagesAsync(deal.ImageUrls, GeminiApiKey);
+                
+                // Рассчитываем динамическую дельту визуальной оценки ИИ
+                double visionDelta = 5.0; // Базовый бонус подтверждения наличия фото
+                string lowerResult = result.ToLowerInvariant();
+                
+                if (lowerResult.Contains("идеальн") || lowerResult.Contains("без царапин") || lowerResult.Contains("отличн") || lowerResult.Contains("оригинал") || lowerResult.Contains("коробк") || lowerResult.Contains("комплект"))
+                {
+                    visionDelta = +15.0; // Бонус за идеальное состояние / комплект
+                }
+                else if (lowerResult.Contains("трещин") || lowerResult.Contains("разбит") || lowerResult.Contains("скол") || lowerResult.Contains("неродно") || lowerResult.Contains("выгоран") || lowerResult.Contains("дефект") || lowerResult.Contains("сорван"))
+                {
+                    visionDelta = -30.0; // Штраф за скрытый дефект или вскрытие
+                }
+
+                double oldScore = deal.ArbitrageScore;
+                double newScore = Math.Max(0.0, Math.Min(100.0, oldScore + visionDelta));
+
+                string visualInspectionText = $"\n\n👁️ ВИЗУАЛЬНЫЙ ИИ-АРБИТР ПО ФОТО (Корректировка: {(visionDelta >= 0 ? "+" : "")}{visionDelta:F0} баллов):\n{result}\n→ Итоговый ArbitrageScore: {newScore:F0}/100";
+                
+                _dispatcher.Invoke(() =>
+                {
+                    deal.AiReasoning += visualInspectionText;
+                    deal.VisionDelta = visionDelta;
+                    deal.IsVisionInspected = true;
+                    deal.ArbitrageScore = newScore;
+                    
+                    // Пересортировываем коллекцию на лету, чтобы обновленный лот занял новое место
+                    var sortedList = FilteredHotDeals.OrderByDescending(h => h.ArbitrageScore).ToList();
+                    FilteredHotDeals.Clear();
+                    foreach (var d in sortedList)
+                    {
+                        FilteredHotDeals.Add(d);
+                    }
+                    
+                    OnPropertyChanged(nameof(FilteredHotDeals));
+                });
+
+                LogMessage($"✅ ИИ завершил осмотр! Индекс '{deal.Title}': {oldScore:F0} ➔ {newScore:F0}/100 ({(visionDelta >= 0 ? "+" : "")}{visionDelta:F0})");
+            }
+            catch (Exception ex)
+            {
+                LogMessage($"❌ Ошибка ИИ: {ex.Message}");
+            }
+            finally
+            {
+                IsBusy = false;
+            }
+        }
+
+        public async Task RunDemandArbitrageAsync()
+        {
+            try
+            {
+                var activeDemands = await Task.Run(() => _databaseService.GetActiveDemandListings());
+                var currentSupplies = Result?.AllPrivateListings ?? new List<Listing>();
+
+                if (activeDemands.Count > 0 && currentSupplies.Count > 0)
+                {
+                    var deals = await _matchingClientService.MatchArbitrageAsync(activeDemands, currentSupplies, 200m);
+                    _dispatcher.Invoke(() =>
+                    {
+                        DemandArbitrageDeals.Clear();
+                        foreach (var d in deals.OrderByDescending(x => x.PotentialProfit))
+                        {
+                            DemandArbitrageDeals.Add(d);
+                        }
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                Serilog.Log.Warning(ex, "[MainViewModel] Ошибка при выполнении сопоставления арбитража спроса.");
+            }
+        }
+
+        public void Dispose()
+        {
+            if (_disposed) return;
+            _disposed = true;
+
+            if (_telegramService != null)
+            {
+                _telegramService.BlacklistRequested -= OnBlacklistRequested;
+                _telegramService.BlacklistLoginRequested -= OnBlacklistLoginRequested;
+            }
+
+            _autoMonitorTimer?.Stop();
+
+            _cts?.Cancel();
+            _cts?.Dispose();
+
+            _resultLock?.Dispose();
+
+            GC.SuppressFinalize(this);
         }
     }
 }
