@@ -1,3 +1,4 @@
+using System;
 using SmartphoneMonitor.Models;
 
 namespace SmartphoneMonitor.Services
@@ -48,14 +49,29 @@ namespace SmartphoneMonitor.Services
         {
             if (listing.IsStolen || listing.HasCriticalDefect) return false;
 
-            // Standard hot deal: high score, no defects
-            if (recommendationScore >= 70.0 && (!listing.IsCommercial || listing.IsNew) && (listing.Defects == null || listing.Defects.Count == 0))
+            // Strict Reseller / Commercial Filter: Resellers NEVER qualify for Hot Deals
+            bool isReseller = listing.SellerType.Equals("RESELLER", StringComparison.OrdinalIgnoreCase) ||
+                              listing.IsCommercial ||
+                              listing.NewSmartphoneCategory == "Reseller";
+            if (isReseller && !listing.IsNew)
+            {
+                return false;
+            }
+
+            // Minimum Net Profit Threshold: Must have at least 400 MDL net profit
+            if (listing.NetProfitMargin < 400m)
+            {
+                return false;
+            }
+
+            // Standard hot deal: score >= 70, no defects, confirmed margin >= 400 MDL
+            if (recommendationScore >= 70.0 && (!isReseller || listing.IsNew) && (listing.Defects == null || listing.Defects.Count == 0))
             {
                 return true;
             }
 
-            // Risky deal: decent baseline score but has defects (will be capped at 70 or 55 by evaluator, so we accept >= 40)
-            if (recommendationScore >= 40.0 && (listing.Defects != null && listing.Defects.Count > 0))
+            // Risky deal: decent baseline score but has repairable defects and net profit >= 400 MDL
+            if (recommendationScore >= 45.0 && (listing.Defects != null && listing.Defects.Count > 0) && listing.NetProfitMargin >= 400m)
             {
                 return true;
             }

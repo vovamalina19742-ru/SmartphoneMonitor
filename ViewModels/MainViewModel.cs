@@ -26,6 +26,7 @@ namespace SmartphoneMonitor.ViewModels
         private readonly ExchangeRateService _exchangeRateService;
         private readonly TelegramNotificationService _telegramService;
         private readonly MatchingClientService _matchingClientService;
+        private readonly AntiScamService _antiScamService;
         private readonly DispatcherTimer _autoMonitorTimer;
         private readonly Dispatcher _dispatcher;
         private readonly Random _random = new Random();
@@ -208,7 +209,7 @@ namespace SmartphoneMonitor.ViewModels
 
         public ObservableCollection<string> IntervalOptions { get; } = new ObservableCollection<string>
         {
-            "5 минут", "10 минут", "15 минут", "30 минут", "60 минут"
+            "30 секунд", "60 секунд", "2 минуты", "5 минут", "10 минут", "15 минут", "30 минут", "60 минут"
         };
 
         public bool HasResult => Result != null && Result.TotalListings > 0;
@@ -367,6 +368,7 @@ namespace SmartphoneMonitor.ViewModels
             _exchangeRateService = new ExchangeRateService();
             _telegramService = new TelegramNotificationService();
             _matchingClientService = new MatchingClientService();
+            _antiScamService = new AntiScamService();
             _telegramService.BlacklistRequested += OnBlacklistRequested;
             _telegramService.BlacklistLoginRequested += OnBlacklistLoginRequested;
 
@@ -689,12 +691,14 @@ namespace SmartphoneMonitor.ViewModels
 
         private TimeSpan GetAutoMonitorInterval()
         {
-            int minutes = 5;
-            if (SelectedIntervalString.Contains("10")) minutes = 10;
-            else if (SelectedIntervalString.Contains("15")) minutes = 15;
-            else if (SelectedIntervalString.Contains("30")) minutes = 30;
-            else if (SelectedIntervalString.Contains("60")) minutes = 60;
-            return TimeSpan.FromMinutes(minutes);
+            if (SelectedIntervalString.Contains("30 сек") || SelectedIntervalString.Contains("30s")) return TimeSpan.FromSeconds(30);
+            if (SelectedIntervalString.Contains("60 сек") || SelectedIntervalString.Contains("1 мин") || SelectedIntervalString.Contains("60s")) return TimeSpan.FromSeconds(60);
+            if (SelectedIntervalString.Contains("2 мин")) return TimeSpan.FromMinutes(2);
+            if (SelectedIntervalString.Contains("10")) return TimeSpan.FromMinutes(10);
+            if (SelectedIntervalString.Contains("15")) return TimeSpan.FromMinutes(15);
+            if (SelectedIntervalString.Contains("30")) return TimeSpan.FromMinutes(30);
+            if (SelectedIntervalString.Contains("60")) return TimeSpan.FromMinutes(60);
+            return TimeSpan.FromMinutes(5);
         }
 
         private async void OnAutoMonitorTick(object? sender, EventArgs e)
@@ -751,10 +755,13 @@ namespace SmartphoneMonitor.ViewModels
 
             try
             {
+                // In auto-monitoring mode, scan only page 1-2 for instant sub-minute discovery
+                int scanPages = isAutoRun ? Math.Min(MaxPages, 2) : MaxPages;
+
                 // Fetch price history before run to identify new deals
                 var preRunHistory = _databaseService.GetPriceHistory();
 
-                var rawListings = await Task.Run(() => _scraperService.ScrapeSmartphonesAsync(MaxPages, Constants.EurToMdl, progressReporter, token), token);
+                var rawListings = await Task.Run(() => _scraperService.ScrapeSmartphonesAsync(scanPages, Constants.EurToMdl, progressReporter, token), token);
 
                 token.ThrowIfCancellationRequested();
                 _allScrapedListings = rawListings;
@@ -765,6 +772,11 @@ namespace SmartphoneMonitor.ViewModels
                     IsBusy = false;
                     return;
                 }
+
+                // Incremental Ingestion: match with SQLite PriceHistory to classify New vs Existing & Fresh Private sellers
+                var (newListings, priceDropListings) = _databaseService.ProcessIncrementalIngestion(rawListings);
+                int freshCount = newListings.Count(l => l.SellerType == "FRESH_PRIVATE" || l.NewSmartphoneCategory == "FreshPrivate");
+                LogMessage($"⚡ [Инкрементальный захват] Новых лотов: {newListings.Count} (из них 🆕 Свежих частников: {freshCount}), Снижений цен: {priceDropListings.Count}");
 
                 // If details requested, download seller details in parallel (max 3 concurrent requests)
                 if (FetchDetails)
@@ -812,10 +824,50 @@ namespace SmartphoneMonitor.ViewModels
                     }
                 }
 
-                token.ThrowIfCancellationRequested();
+                // Execute State Machine across database in a single fast transaction
+                var stateEvents = _databaseService.ProcessListingsStateMachineBatch(rawListings);
 
-                // Save new price history
-                _databaseService.SavePriceHistory(rawListings);
+                if (TelegramEnabled && !string.IsNullOrEmpty(TelegramToken) && !string.IsNullOrEmpty(TelegramChatId))
+                {
+                    var priceDrops = stateEvents.Where(e => e.Type == ListingEventType.PriceDrop).ToList();
+                    if (priceDrops.Count > 0)
+                    {
+                        LogMessage($"📢 [Telegram] Обнаружено {priceDrops.Count} снижений цен! Отправка уведомлений...");
+                        foreach (var drop in priceDrops)
+                        {
+                            var d = drop;
+                            _ = Task.Run(async () =>
+                            {
+                                try
+                                {
+                                    await _telegramService.SendListingAlertAsync(TelegramToken, TelegramChatId, d);
+                                }
+                                catch { }
+                            });
+                        }
+                    }
+                }
+
+                // Anti-Scam: pHash duplicate photo check (AutoClaw DCT-II)
+                try
+                {
+                    var listingsWithPhotos = rawListings.Where(l => l.ImageUrls != null && l.ImageUrls.Count > 0).ToList();
+                    if (listingsWithPhotos.Count > 0)
+                    {
+                        Status = $"Анти-Скам: проверка {listingsWithPhotos.Count} фото (pHash DCT)...";
+                        var antiScamTasks = listingsWithPhotos.Select(l => _antiScamService.AnalyzeListingPhotosAsync(l));
+                        await Task.WhenAll(antiScamTasks);
+                        var duplicatesCount = listingsWithPhotos.Count(l => l.IsDuplicatePhotoDetected);
+                        if (duplicatesCount > 0)
+                        {
+                            LogMessage($"⚠️ [Анти-Скам] Обнаружено {duplicatesCount} объявлений с перезалитыми фото!");
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    LogMessage($"⚠️ [Анти-Скам] Ошибка анализа фото: {ex.Message}");
+                }
 
                 // Run data analysis
                 Status = "Анализ данных...";

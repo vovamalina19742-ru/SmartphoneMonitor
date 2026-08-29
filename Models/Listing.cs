@@ -28,6 +28,8 @@ namespace SmartphoneMonitor.Models
         public string ComparisonBg { get; set; } = "#EEEEEE";
         public int BatteryHealth { get; set; }
         public bool IsNew { get; set; }
+        public bool IsNewlyDiscovered { get; set; }
+        public decimal? PreviousPrice { get; set; }
 
         public string NewSmartphoneCategory { get; set; } = "PrivateUsed";
 
@@ -39,6 +41,8 @@ namespace SmartphoneMonitor.Models
                 {
                     "RetailChain" => "🏢 Крупный ритейл",
                     "Shop999" => "🏪 Магазин 999",
+                    "Reseller" => "🏬 Перекупщик (Витрина)",
+                    "FreshPrivate" => "🆕 Свежий частник",
                     "PrivateNew" => "👤 Частник (Новый)",
                     _ => IsNew ? "✨ Новый" : "📱 б/у"
                 };
@@ -53,6 +57,8 @@ namespace SmartphoneMonitor.Models
                 {
                     "RetailChain" => "#F3E8FF",
                     "Shop999" => "#E0F2FE",
+                    "Reseller" => "#FEE2E2",
+                    "FreshPrivate" => "#D1FAE5",
                     "PrivateNew" => "#FEF3C7",
                     _ => "#F3F4F6"
                 };
@@ -67,6 +73,8 @@ namespace SmartphoneMonitor.Models
                 {
                     "RetailChain" => "#6B21A8",
                     "Shop999" => "#0369A1",
+                    "Reseller" => "#DC2626",
+                    "FreshPrivate" => "#065F46",
                     "PrivateNew" => "#B45309",
                     _ => "#374151"
                 };
@@ -165,5 +173,31 @@ namespace SmartphoneMonitor.Models
         public decimal RecommendedResellPrice { get; set; }
         public string AiReasoning { get; set; } = string.Empty;
         public System.Collections.Generic.List<string> ImageUrls { get; set; } = new System.Collections.Generic.List<string>();
+
+        public bool IsDuplicatePhotoDetected { get; set; }
+        public string DuplicateSourceInfo { get; set; } = string.Empty;
+        public System.Collections.Generic.List<ulong> PhotoHashes { get; set; } = new System.Collections.Generic.List<ulong>();
+
+        public string ScamWarningBadge => IsDuplicatePhotoDetected ? "⚠️ ПЕРЕЗАЛИВ ФОТО (СКАМ)" : string.Empty;
+        public string ScamWarningBg => IsDuplicatePhotoDetected ? "#FEE2E2" : "Transparent";
+        public string ScamWarningFg => IsDuplicatePhotoDetected ? "#DC2626" : "#374151";
+    }
+
+    public enum ListingEventType
+    {
+        NewListing,
+        PriceDrop
+    }
+
+    public class ListingStateEvent
+    {
+        public ListingEventType Type { get; set; }
+        public string Url { get; set; } = string.Empty;
+        public string Title { get; set; } = string.Empty;
+        public string Brand { get; set; } = string.Empty;
+        public decimal CurrentPrice { get; set; }
+        public decimal? OldPrice { get; set; }
+        public decimal PriceDiff => (OldPrice.HasValue && OldPrice.Value > CurrentPrice) ? (OldPrice.Value - CurrentPrice) : 0m;
+        public double PriceDiffPercent => (OldPrice.HasValue && OldPrice.Value > 0) ? (double)((OldPrice.Value - CurrentPrice) / OldPrice.Value) * 100.0 : 0.0;
     }
 }

@@ -8,6 +8,8 @@ namespace SmartphoneMonitor.Services
         public decimal BaselinePrice { get; set; }
         public bool IsLegacyBudget { get; set; }
         public string ModelGroup { get; set; } = string.Empty;
+        public int ReleaseYear { get; set; } = 2024;
+        public int AgeYears => Math.Max(0, 2026 - ReleaseYear);
     }
 
     public static class ModelPriceBaselineService
@@ -53,10 +55,18 @@ namespace SmartphoneMonitor.Services
             { "xiaomi_redmi 10c_128", 1500m },
             { "xiaomi_redmi 10_64", 1350m },
             { "xiaomi_redmi 10_128", 1650m },
-            { "xiaomi_redmi note 10_64", 1600m },
-            { "xiaomi_redmi note 10_128", 1950m },
-            { "xiaomi_redmi note 10 pro_64", 1900m },
-            { "xiaomi_redmi note 10 pro_128", 2250m },
+            { "xiaomi_redmi note 10_64", 1400m },
+            { "xiaomi_redmi note 10_128", 1650m },
+            { "xiaomi_redmi note 10s_64", 1400m },
+            { "xiaomi_redmi note 10s_128", 1600m },
+            { "xiaomi_redmi note 10 pro_64", 1700m },
+            { "xiaomi_redmi note 10 pro_128", 1950m },
+
+            { "xiaomi_redmi note 11_64", 1600m },
+            { "xiaomi_redmi note 11_128", 1850m },
+            { "xiaomi_redmi note 11s_64", 1750m },
+            { "xiaomi_redmi note 11s_128", 2000m },
+            { "xiaomi_redmi note 11 pro_128", 2300m },
 
             { "xiaomi_redmi 12c_64", 1200m },
             { "xiaomi_redmi 12c_128", 1450m },
@@ -180,6 +190,35 @@ namespace SmartphoneMonitor.Services
             }
 
             return null;
+        }
+
+        public static int EstimateDeviceAgeYears(string brand, string model, string title)
+        {
+            string text = $"{brand} {model} {title}".ToLowerInvariant();
+
+            // 5-8+ years old (2017-2021)
+            if (text.Contains("redmi 6") || text.Contains("redmi 7") || text.Contains("redmi 8") || text.Contains("redmi 9") ||
+                text.Contains("note 7") || text.Contains("note 8") || text.Contains("note 9") || text.Contains("note 10") || text.Contains("note 10s") ||
+                text.Contains("poco x3") || text.Contains("poco m3") || text.Contains("poco f1") || text.Contains("poco f2") ||
+                text.Contains("galaxy a10") || text.Contains("galaxy a20") || text.Contains("galaxy a30") || text.Contains("galaxy a50") || text.Contains("galaxy a51") || text.Contains("galaxy a71") || text.Contains("galaxy a12") || text.Contains("galaxy a21") || text.Contains("galaxy a31") || text.Contains("galaxy a32") ||
+                text.Contains("galaxy s8") || text.Contains("galaxy s9") || text.Contains("galaxy s10") || text.Contains("galaxy s20") ||
+                text.Contains("iphone 7") || text.Contains("iphone 8") || text.Contains("iphone x") || text.Contains("iphone xr") || text.Contains("iphone xs") || text.Contains("iphone 11"))
+            {
+                return 5;
+            }
+
+            // 3-4 years old (2022-2023)
+            if (text.Contains("redmi 10") || text.Contains("redmi 12c") || text.Contains("redmi a1") || text.Contains("redmi a2") ||
+                text.Contains("note 11") || text.Contains("note 11s") || text.Contains("note 11 pro") || text.Contains("note 12") ||
+                text.Contains("poco m4") || text.Contains("poco m5") || text.Contains("poco x4") || text.Contains("poco x5") ||
+                text.Contains("galaxy a13") || text.Contains("galaxy a23") || text.Contains("galaxy a33") || text.Contains("galaxy a53") || text.Contains("galaxy a73") || text.Contains("galaxy a14") || text.Contains("galaxy a24") || text.Contains("galaxy a34") || text.Contains("galaxy a54") ||
+                text.Contains("galaxy s21") || text.Contains("galaxy s22") ||
+                text.Contains("iphone 12") || text.Contains("iphone 13"))
+            {
+                return 3;
+            }
+
+            return 1;
         }
     }
 }

@@ -118,10 +118,21 @@ namespace SmartphoneMonitor.Services
             int promoMatches = 0;
             var promoMatchesByBrand = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
 
+            var authorListingCounts = privateListings
+                .Where(l => !string.IsNullOrEmpty(l.AuthorLogin))
+                .GroupBy(l => l.AuthorLogin, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(g => g.Key, g => g.Count(), StringComparer.OrdinalIgnoreCase);
+
+            var phoneListingCounts = privateListings
+                .Where(l => !string.IsNullOrEmpty(l.PhoneNumber))
+                .GroupBy(l => ListingClassifier.NormalizePhone(l.PhoneNumber), StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(g => g.Key, g => g.Count(), StringComparer.OrdinalIgnoreCase);
+
             foreach (var l in privateListings)
             {
                 decimal referencePrice = 0m;
                 string valueLabel = "";
+                int sampleCount = 0;
 
                 var exactKey = new ExactModelKey { Brand = l.Brand, Model = l.Model, StorageGB = l.StorageGB, IsNew = l.IsNew };
                 var generalKey = new GeneralModelKey { Brand = l.Brand, Model = l.Model, IsNew = l.IsNew };
@@ -131,11 +142,13 @@ namespace SmartphoneMonitor.Services
                 if (l.StorageGB > 0 && priceAnalysisResult.ExactModelPrices.TryGetValue(exactKey, out var exactVal) && exactVal.Count >= 2)
                 {
                     referencePrice = exactVal.MedianPrice;
+                    sampleCount = exactVal.Count;
                     valueLabel = $"{condLabel} моделей c " + (l.StorageGB == 1024 ? "1 TB" : l.StorageGB + " GB");
                 }
                 else if (priceAnalysisResult.GeneralModelPrices.TryGetValue(generalKey, out var generalVal) && generalVal.Count >= 2)
                 {
                     referencePrice = generalVal.MedianPrice;
+                    sampleCount = generalVal.Count;
                     valueLabel = $"{condLabel} моделей";
                 }
                 else
@@ -144,6 +157,7 @@ namespace SmartphoneMonitor.Services
                     if (baselineInfo != null)
                     {
                         referencePrice = baselineInfo.BaselinePrice;
+                        sampleCount = 0;
                         valueLabel = $"базовых {condLabel} ({baselineInfo.ModelGroup})";
                     }
                     else
@@ -152,49 +166,59 @@ namespace SmartphoneMonitor.Services
                         if (brandStat != null && brandStat.Count >= 3)
                         {
                             referencePrice = Math.Min(brandStat.MedianPrice, 2000m);
+                            sampleCount = brandStat.Count;
                             valueLabel = $"брендовых {condLabel}";
                         }
                         else
                         {
                             referencePrice = Math.Min(analysisResult.MedianPrice, 1800m);
+                            sampleCount = 0;
                             valueLabel = $"общерыночных {condLabel}";
                         }
                     }
                 }
 
                 l.ModelAveragePrice = referencePrice;
-                
-                // Оценка дефицита модели на рынке (спрос/предложение)
-                double scarcityMultiplier = 1.0;
-                int supplyCount = 0;
-                if (!string.IsNullOrEmpty(l.Model) && modelSupplyCounts.TryGetValue(l.Model, out supplyCount))
+
+                // 1. Детекция перекупщиков и витрин (Multi-listing / Showcase keywords)
+                int authorListingCount = (!string.IsNullOrEmpty(l.AuthorLogin) && authorListingCounts.TryGetValue(l.AuthorLogin, out int ac)) ? ac : 1;
+                string normPhone = ListingClassifier.NormalizePhone(l.PhoneNumber);
+                int phoneListingCount = (!string.IsNullOrEmpty(normPhone) && phoneListingCounts.TryGetValue(normPhone, out int pc)) ? pc : 1;
+
+                bool isReseller = authorListingCount >= 2 || phoneListingCount >= 2 ||
+                                  ListingClassifier.IsResellerShowcase(l.Title, l.Description, l.AuthorLogin, Math.Max(authorListingCount, phoneListingCount)) ||
+                                  l.SellerType.Equals("Shop", StringComparison.OrdinalIgnoreCase) ||
+                                  l.SellerType.Equals("RESELLER", StringComparison.OrdinalIgnoreCase) ||
+                                  l.IsCommercial;
+
+                if (isReseller)
                 {
-                    if (supplyCount <= 3) // Дефицитная модель
-                    {
-                        scarcityMultiplier = 1.03; // Наценка +3%
-                    }
-                    else if (supplyCount >= 15) // Перенасыщенный рынок
-                    {
-                        scarcityMultiplier = 0.97; // Скидка -3% для быстрого сбыта
-                    }
+                    l.SellerType = "RESELLER";
+                    l.IsCommercial = true;
+                    l.NewSmartphoneCategory = "Reseller";
                 }
 
-                // Рекомендуемая цена продажи с учетом дефицита
-                decimal baseResellPrice = referencePrice * (decimal)scarcityMultiplier;
+                // 2. Оценка возраста устройства и износа
+                int ageYears = ModelPriceBaselineService.EstimateDeviceAgeYears(l.Brand, l.Model, l.Title);
 
-                // Применяем Charm Pricing (психологическое округление)
+                // 3. ЖЕСТКИЕ ПРАВИЛА ЦЕНООБРАЗОВАНИЯ ФИНАНСОВОГО КОМИТЕТА:
+                // Запрещено ставить цену перепродажи выше медианы рынка.
+                // Формула реалистичной быстрой перепродажи: 85% от медианы рынка.
+                decimal baseResellPrice = referencePrice > 0m ? Math.Round(referencePrice * 0.85m) : 0m;
+
                 bool isPremium = baseResellPrice >= 15000m || (l.Brand != null && l.Brand.Equals("Apple", StringComparison.OrdinalIgnoreCase));
                 l.RecommendedResellPrice = CharmPricingService.ApplyCharmPricing(baseResellPrice, isPremium);
 
-                // Рассчитываем чистую маржу на основе RecommendedResellPrice
-                l.NetProfitMargin = l.IsStolen ? 0m : (l.RecommendedResellPrice - (l.PriceValue + l.RepairCost));
+                // Формула чистой прибыли: Resale_Target - Listing_Price - Repair_Cost - 200 MDL (накладные расходы)
+                decimal overheadCosts = 200m;
+                l.NetProfitMargin = l.IsStolen ? 0m : (l.RecommendedResellPrice - l.PriceValue - l.RepairCost - overheadCosts);
 
                 if (referencePrice > 0m)
                 {
                     decimal priceDeviation = (referencePrice - l.PriceValue) / referencePrice * 100m;
                     l.ModelPriceDeviationPercent = Math.Round((double)priceDeviation, 1);
 
-                    // metric: check if a promo exists for this listing
+                    // Promo check
                     try
                     {
                         var promo = _evaluationService.GetBestPromo(l, retailPromoMap);
@@ -224,17 +248,22 @@ namespace SmartphoneMonitor.Services
                     double score = _evaluationService.EvaluateScore(l, priceDeviation, referencePrice, retailPromoMap, priceHistory);
                     _evaluationService.ApplyComparisonText(l, priceDeviation, valueLabel, retailPromoMap);
 
-                    // Валидация цены через локальный шлюз безопасности (Python API)
-                    var validationResult = _matchingClient.ValidatePriceAsync(
-                        referencePrice,
-                        referencePrice * 0.70m, // Условная себестоимость (30% ниже рынка)
-                        referencePrice,
-                        l.PriceValue
-                    ).GetAwaiter().GetResult();
+                    // 4. Антигаллюцинация выборки и спроса: если выборка < 3 объявлений — штраф 30%
+                    bool isInsufficientData = sampleCount < 3;
+                    if (isInsufficientData)
+                    {
+                        score *= 0.70;
+                    }
 
-                    // Sanity Check: завышенные скидки (>40%) для старых бюджетных моделей требуют ручной проверки
+                    // 5. Правило минимальной маржи: если чистая прибыль < 400 MDL -> сделка не может быть горячей (Score <= 60)
+                    if (l.NetProfitMargin < 400m && score > 60.0)
+                    {
+                        score = 60.0;
+                    }
+
+                    // Sanity check for legacy models
                     var baselineCheck = ModelPriceBaselineService.GetBaseline(l.Brand, l.Model, l.StorageGB);
-                    bool isLegacyBudgetModel = baselineCheck?.IsLegacyBudget ?? false;
+                    bool isLegacyBudgetModel = baselineCheck?.IsLegacyBudget ?? false || ageYears >= 4;
                     bool requiresManualReview = priceDeviation >= 40m && (isLegacyBudgetModel || !priceAnalysisResult.ExactModelPrices.ContainsKey(exactKey));
 
                     if (ListingClassifier.IsBuyAd(l.Title, l.Description))
@@ -258,19 +287,19 @@ namespace SmartphoneMonitor.Services
                         l.ComparisonBg = "#F2F2F7";
                         score = 0.0;
                     }
+                    else if (isReseller)
+                    {
+                        l.ComparisonText = "🏬 Перекупщик / Витрина";
+                        l.ComparisonColor = "#DC2626";
+                        l.ComparisonBg = "#FEE2E2";
+                        score = Math.Min(score, 35.0);
+                    }
                     else if (requiresManualReview)
                     {
                         l.ComparisonText = "⚠️ Требует ручной проверки рыночной цены";
-                        l.ComparisonColor = "#E65100"; // Оранжевый цвет предупреждения
-                        l.ComparisonBg = "#FFF3E0";    // Бледный оранжевый фон
-                        score = Math.Min(score, 45.0); // Ограничиваем балл, чтобы не было ложной "Горячей сделки"
-                    }
-                    else if (validationResult != null && !validationResult.Value.IsValid)
-                    {
-                        l.ComparisonText = "⚠️ " + validationResult.Value.WarningMessage;
-                        l.ComparisonColor = "#FF3B30"; // Красный цвет ошибки
-                        l.ComparisonBg = "#FFE5E5";    // Бледный красный фон
-                        score = 0.0; // Аннулируем оценку, чтобы не попало в "Горячие сделки"
+                        l.ComparisonColor = "#E65100";
+                        l.ComparisonBg = "#FFF3E0";
+                        score = Math.Min(score, 45.0);
                     }
 
                     // Генерируем цепочку рассуждений ИИ-агента (Рассуждения Совета Комитетов)
@@ -278,66 +307,67 @@ namespace SmartphoneMonitor.Services
                     reasoning.AppendLine("🏛️ ВЕРДИКТ СОВЕТА ИИ-КОМИТЕТОВ (ИИ-СУДЬЯ: СКТЕПТИК-ПЕРЕКУПЩИК):");
                     reasoning.AppendLine("────────────────────────────────────────");
                     reasoning.AppendLine("🧠 ИНСТРУКЦИЯ ИИ-СУДЬИ:");
-                    reasoning.AppendLine("«Ты — циничный и опытный перекупщик смартфонов. По умолчанию каждое объявление — это обычная рядовая цена. Твоя задача — найти подвох, проверить возраст устройства и доказать, что выгоды нет. Если устройство старое (например, Redmi 9), цена в 1000 лей — это нормальный рынок, а не аномальная скидка. Не ставь высокий приоритет и статус 'Горячая сделка', если нет железобетонных доказательств реальной перекупщицкой маржи.»");
+                    reasoning.AppendLine("«Ты — циничный и опытный перекупщик смартфонов. Твоя задача — найти подвох, проверить профиль продавца на признаки перекупщика/витрины, учесть реальный возраст устройства и запретить переоценку. Если устройство старше 3-5 лет или продается перекупщиком с витрины, покупка под перепродажу запрещена или строго ограничена.»");
                     reasoning.AppendLine();
 
-                    if (isLegacyBudgetModel)
-                    {
-                        reasoning.AppendLine("[ПРЕДУПРЕЖДЕНИЕ: Устаревшее бюджетное устройство. Цена в районе 1000 лей для него — это нормальный рынок, а не аномальная скидка]");
-                        reasoning.AppendLine();
-                    }
-
-                    reasoning.AppendLine("🔍 КОМИТЕТ РАЗВЕДКИ И НОРМАЛИЗАЦИИ:");
+                    reasoning.AppendLine("🔍 КОМИТЕТ РАЗВЕДКИ И ДЕТЕКЦИИ ПРОДАВЦА:");
                     reasoning.AppendLine($"• Модель: {l.Brand} {l.Model} ({(l.StorageGB > 0 ? l.StorageGB + " GB" : "N/A")}, {(l.IsNew ? "новый" : "б/у")})");
-                    reasoning.AppendLine($"• Классификация источника: {l.CategoryBadgeText} ({l.SellerType})");
+                    reasoning.AppendLine($"• Продавец: {l.AuthorLogin} | Объявлений в категории: {Math.Max(authorListingCount, phoneListingCount)}");
+                    string sellerClassificationDesc = isReseller
+                        ? "🚨 ВИТРИНА / ПЕРЕКУПЩИК"
+                        : (l.SellerType == "FRESH_PRIVATE" || l.NewSmartphoneCategory == "FreshPrivate")
+                            ? "🆕 СВЕЖИЙ ЧАСТНИК (Новый аккаунт, 1 лот в базе — максимальная вероятность реального владельца)"
+                            : "Частный продавец";
+                    reasoning.AppendLine($"• Классификация источника: {l.CategoryBadgeText} ({sellerClassificationDesc})");
 
                     reasoning.AppendLine();
-                    reasoning.AppendLine($"🏷️ СТРАТЕГИЯ ОЦЕНКИ ПО КАТЕГОРИИ ПРОДАВЦА ({l.CategoryBadgeText}):");
-                    switch (l.NewSmartphoneCategory)
+                    reasoning.AppendLine("⏳ КОМИТЕТ ВОЗРАСТА И ИЗНОСА ОБОРУДОВАНИЯ:");
+                    reasoning.AppendLine($"• Оценочный возраст модели: ~{ageYears} лет");
+                    if (ageYears >= 5)
                     {
-                        case "RetailChain":
-                            reasoning.AppendLine("• Регламент ИИ: Крупный официальный ритейл. Оценивать честность промо-скидки относительно базовой цены. Учитывать 24 мес. гарантии.");
-                            break;
-                        case "Shop999":
-                            reasoning.AppendLine($"• Регламент ИИ: Магазин 999.md / Импорт. Сравнивать цену с крупным ритейлом (~{referencePrice * 1.15m:F0} MDL). Зафиксировать маржу выгоды ({referencePrice * 1.15m - l.PriceValue:F0} MDL).");
-                            break;
-                        case "PrivateNew":
-                            reasoning.AppendLine("• Регламент ИИ: Частник (Новый/Запечатанный). Проверять наличие упаковки/пломб, чека и дисконт относительно магазинов.");
-                            break;
-                        default:
-                            reasoning.AppendLine("• Регламент ИИ: Б/у смартфон от частного продавца. Проверять износ, дефекты и реальную выгоду.");
-                            break;
+                        reasoning.AppendLine("• Штраф возраста: ⚠️ -25 баллов (Устаревшая платформа 5+ лет, риск деградации памяти/платы, отсутствие актуальной ОС). Score ограничен 65.");
                     }
-
-                    reasoning.AppendLine();
-                    reasoning.AppendLine("💸 КОМИТЕТ ФИНАНСОВОЙ ОЦЕНКИ (ФАКТЫ):");
-                    decimal priceRangeLow = Math.Round(referencePrice * 0.85m);
-                    decimal priceRangeHigh = Math.Round(referencePrice * 1.15m);
-                    reasoning.AppendLine($"• Цена продавца: {l.PriceValue:F0} MDL");
-                    reasoning.AppendLine($"• Реальный ценовой диапазон модели на рынке: {priceRangeLow:F0}–{priceRangeHigh:F0} MDL (Ориентир медианы: {referencePrice:F0} MDL)");
-                    reasoning.AppendLine($"• Абсолютная выгода к базовой медиане: {referencePrice - l.PriceValue:F0} MDL");
-                    
-                    if (scarcityMultiplier > 1.0)
+                    else if (ageYears >= 3)
                     {
-                        reasoning.AppendLine($"• Спрос/Предложение: Дефицит модели ({supplyCount} объявлений). Наценка +3%.");
-                    }
-                    else if (scarcityMultiplier < 1.0)
-                    {
-                        reasoning.AppendLine($"• Спрос/Предложение: Избыток предложений ({supplyCount} объявлений). Скидка -3%.");
+                        reasoning.AppendLine("• Штраф возраста: ⚠️ -15 баллов (Модель 3-4 года на рынке, износ компонентов).");
                     }
                     else
                     {
-                        reasoning.AppendLine($"• Спрос/Предложение: Стабильный спрос ({supplyCount} объявлений).");
+                        reasoning.AppendLine("• Статус платформы: Актуальная модель (до 2 лет).");
                     }
-                    reasoning.AppendLine($"• Оценка: Рекомендация к перепродаже: {l.RecommendedResellPrice:F0} MDL (Чистая маржа: {l.NetProfitMargin:F0} MDL)");
+
+                    reasoning.AppendLine();
+                    decimal totalCost = l.PriceValue + l.RepairCost + overheadCosts;
+                    reasoning.AppendLine("💸 КОМИТЕТ ФИНАНСОВОЙ ОЦЕНКИ И АРБИТРАЖА:");
+                    reasoning.AppendLine($"• Цена продавца: {l.PriceValue:F0} MDL");
+                    if (l.RepairCost > 0m)
+                    {
+                        reasoning.AppendLine($"• Расходы на ремонт/запчасти: {l.RepairCost:F0} MDL");
+                    }
+                    reasoning.AppendLine($"• Накладные расходы (логистика, торг, риски): {overheadCosts:F0} MDL");
+                    reasoning.AppendLine($"• Полная себестоимость проекта: {totalCost:F0} MDL");
+                    reasoning.AppendLine($"• Медиана рынка: {referencePrice:F0} MDL (Размер выборки: {(sampleCount > 0 ? sampleCount.ToString() : "базовый каталог")})");
+                    reasoning.AppendLine($"• Реалистичная цель быстрой перепродажи (85% от медианы): {l.RecommendedResellPrice:F0} MDL");
+                    reasoning.AppendLine($"• Итоговая чистая маржа: {l.NetProfitMargin:F0} MDL {(l.NetProfitMargin < 400m ? "(⚠️ Меньше минимального порога 400 MDL — сделка не горячая)" : "(✅ Достаточная маржа >400 MDL)")}");
+
+                    reasoning.AppendLine();
+                    reasoning.AppendLine("📊 АНАЛИЗ ВЫБОРКИ И СПРОСА (АНТИГАЛЛЮЦИНАЦИЯ):");
+                    if (isInsufficientData)
+                    {
+                        reasoning.AppendLine($"• Статус выборки: ⚠️ INSUFFICIENT_DATA (Выборка {sampleCount} объявлений < 3). Спрос не подтвержден. Оценка уверенности снижена на 30%.");
+                    }
+                    else
+                    {
+                        reasoning.AppendLine($"• Статус выборки: ✅ Достаточная выборка ({sampleCount} активных объявлений).");
+                    }
 
                     reasoning.AppendLine();
                     reasoning.AppendLine("⚠️ КОМИТЕТ РИСКОВ И ДЕФЕКТОВ:");
                     reasoning.AppendLine($"• Здоровье батареи (АКБ): {(l.BatteryHealth > 0 ? l.BatteryHealth + "%" : "Не указано / Не применимо")}");
-                    reasoning.AppendLine($"• Обнаружено дефектов: {(l.Defects.Count > 0 ? l.Defects.Count.ToString() : "Нет")}");
+                    reasoning.AppendLine($"• Обнаружено дефектов: {(l.Defects.Count > 0 ? string.Join(", ", l.Defects) : "Нет")}");
                     if (l.RepairCost > 0m)
                     {
-                        reasoning.AppendLine($"• Стоимость ремонта: {l.RepairCost:F0} MDL");
+                        reasoning.AppendLine($"• Оценочная стоимость устранения: {l.RepairCost:F0} MDL");
                     }
                     reasoning.AppendLine($"• Сигнал кражи / Неоригинал: {(l.IsStolen ? "КРИТИЧЕСКИЙ (Найдены маркеры)" : "Чисто")}");
                     reasoning.AppendLine($"• Критический износ: {(l.HasCriticalDefect ? "Да (Экран бит / не включается)" : "Нет")}");
@@ -355,10 +385,21 @@ namespace SmartphoneMonitor.Services
                     reasoning.AppendLine("⚖️ ПРЕЗИДИУМ ПРИНЯТИЯ РЕШЕНИЙ (АРБИТР):");
                     string verdict = "Рядовая цена (Нет сверхприбыли)";
                     string recommendation = "Обычная рыночная цена. Перепродажа малоэффективна.";
+
                     if (l.IsStolen)
                     {
                         verdict = "🚨 ЭКСТРЕМАЛЬНЫЙ РИСК (Возможно краденый / Заблокирован)";
                         recommendation = "Покупка категорически не рекомендуется.";
+                    }
+                    else if (isReseller)
+                    {
+                        verdict = "⛔ ПЕРЕКУПЩИК / ВИТРИНА (Выгоды нет)";
+                        recommendation = "Продавец — профессиональный перекупщик. Цена розничная, покупка для перепродажи принесет убыток.";
+                    }
+                    else if (ageYears >= 5 && l.PriceValue >= referencePrice * 0.80m)
+                    {
+                        verdict = "⏳ УСТАРЕВШЕЕ УСТРОЙСТВО (5+ лет)";
+                        recommendation = "Старая платформа, EOL по обновлениям. Реальная ликвидность низкая.";
                     }
                     else if (requiresManualReview)
                     {
@@ -371,21 +412,27 @@ namespace SmartphoneMonitor.Services
                         recommendation = "Критический дефект (потекшая матрица/битый экран/дефекты). Ремонт съест всю выгоду. Не брать!";
                         score = Math.Min(score, 25.0);
                     }
+                    else if (l.Defects.Count > 0 && l.NetProfitMargin >= 400m && !l.HasCriticalDefect && !isReseller)
+                    {
+                        verdict = "🔧 ВЫГОДНАЯ СДЕЛКА ПОД РЕМОНТ (Маржа подтверждена)";
+                        recommendation = $"Устранимый дефект ({string.Join(", ", l.Defects)}). С учетом стоимости запчастей ({l.RepairCost:F0} MDL) и накладных расходов чистая прибыль составляет {l.NetProfitMargin:F0} MDL. Выгодно под восстановление!";
+                    }
                     else if (l.Defects.Count > 0)
                     {
-                        verdict = "⚠️ СПОРНАЯ СДЕЛКА (Имеются дефекты)";
-                        recommendation = "Покупать только под ремонт или на запчасти с учетом большого торга.";
+                        verdict = "⚠️ СПОРНАЯ СДЕЛКА (Ремонт съедает маржу)";
+                        recommendation = $"Имеются дефекты ({string.Join(", ", l.Defects)}). Стоимость ремонта ({l.RepairCost:F0} MDL) оставляет чистую прибыль {l.NetProfitMargin:F0} MDL (<400 MDL). Покупать только с большим торгом.";
                     }
-                    else if (l.NetProfitMargin >= 400m && score >= 70.0 && !l.HasCriticalDefect && l.Defects.Count == 0)
+                    else if (l.NetProfitMargin >= 400m && score >= 70.0 && !l.HasCriticalDefect && l.Defects.Count == 0 && !isReseller)
                     {
                         verdict = "🔥 ОТЛИЧНОЕ ПРЕДЛОЖЕНИЕ (Высокий приоритет)";
-                        recommendation = "Подтвержденная высокая маржа. Покупать немедленно.";
+                        recommendation = "Подтвержденная высокая чистая маржа от частного владельца. Покупать немедленно.";
                     }
-                    else if (l.NetProfitMargin >= 250m && score >= 60.0 && !l.HasCriticalDefect && l.Defects.Count == 0)
+                    else if (l.NetProfitMargin >= 250m && score >= 60.0 && !l.HasCriticalDefect && l.Defects.Count == 0 && !isReseller)
                     {
                         verdict = "👍 ВЫГОДНАЯ СДЕЛКА (Средний приоритет)";
                         recommendation = "Хороший вариант для перепродажи.";
                     }
+
                     reasoning.AppendLine($"• Резюме: {verdict}");
                     reasoning.AppendLine($"• Действие: {recommendation}");
 
@@ -463,55 +510,64 @@ namespace SmartphoneMonitor.Services
 
             string text = (title + " " + description).ToLowerInvariant();
 
-            // 1. iCloud / MDM / Lock / Stolen checks
-            if (Regex.IsMatch(text, @"\b(?:icloud|айклауд|cont|blocked|blocat|r-sim|r sim|rsim|gevey|mdm|bypass|байпас|заблокирован|блокировк|заблокир|activation lock|активац)\w*"))
+            // 1. iCloud / MDM / Lock / Stolen checks (RO + RU + EN)
+            if (Regex.IsMatch(text, @"\b(?:icloud|айклауд|cont|blocked|blocat|r-sim|r sim|rsim|gevey|mdm|bypass|байпас|заблокирован|блокировк|заблокир|activation lock|активац|blocat pe retea|blocat rețea)\w*"))
             {
-                defects.Add("Заблокирован (iCloud / MDM / R-SIM)");
+                defects.Add("Заблокирован (iCloud / MDM / R-SIM / Rețea)");
                 isStolen = true;
                 isCritical = true;
             }
 
-            // 2. Screen issues
-            if (Regex.IsMatch(text, @"\b(?:разбит|трещин|скол|spart|sticl|crap|defect|пятн|pete|полос|lines|lovit|burn.*in|выгоран)\w*\b") &&
-                Regex.IsMatch(text, @"(?:экран|дисплей|стекл|display|ecran|sticla|screen)\w*"))
+            // 2. Back glass / cover damage & replacement (RO + RU + EN)
+            // «înlocuirea capacului», «capac spate spart», «capacul din spate», «schimb capac», «spatele spart», «capac crapat», «capac fisurat»
+            if (Regex.IsMatch(text, @"(?:înlocuirea capacului|inlocuirea capacului|necesită.*înlocuirea.*capacului|necesita.*inlocuirea.*capacului|capac.*spate.*spart|capacul.*din.*spate|capac.*spate|spatele.*spart|schimb.*capac|schimbat.*capac|capac.*fisurat|capac.*crăpat|capac.*crapat|necesita.*schimb.*capac)") ||
+                (Regex.IsMatch(text, @"\b(?:задн|крышк|back|spate)\w*\b") && Regex.IsMatch(text, @"\b(?:разбит|трещин|spart|crap|defect|замен|schimb|înlocuir|inlocuir)\w*\b")))
             {
-                defects.Add("Разбит/поврежден дисплей или стекло");
-                repairCost += 2500m; // Generic screen replacement cost
+                defects.Add("Разбита/повреждена задняя крышка (înlocuire capac)");
+                // Для Samsung / Xiaomi / Android крышка 200-250 MDL + работа 100-150 MDL = 350 MDL; для Apple 600 MDL
+                decimal backCoverCost = brand.Equals("Apple", StringComparison.OrdinalIgnoreCase) ? 600m : 350m;
+                repairCost += backCoverCost;
+            }
+
+            // 3. Screen / Display / Glass issues (RO + RU + EN)
+            // «ecran crăpat», «sticlă spartă», «pixeli morți», «display defect», «ecran negru», «linie pe ecran»
+            if (Regex.IsMatch(text, @"(?:ecran.*crăpat|ecran.*crapat|sticlă.*spartă|sticla.*sparta|pixeli.*morți|pixeli.*morti|ecran.*lovit|sticlă.*fisurată|sticla.*fisurata|display.*defect|ecran.*negru|lini[ie].*ecran|ecran.*spart|display.*spart)") ||
+                (Regex.IsMatch(text, @"\b(?:разбит|трещин|скол|spart|sticl|crap|defect|пятн|pete|полос|lines|lovit|burn.*in|выгоран)\w*\b") &&
+                 Regex.IsMatch(text, @"(?:экран|дисплей|стекл|display|ecran|sticla|screen)\w*")))
+            {
+                defects.Add("Разбит/поврежден дисплей или стекло (ecran/sticlă)");
+                decimal screenCost = brand.Equals("Apple", StringComparison.OrdinalIgnoreCase) ? 2500m : 1600m;
+                repairCost += screenCost;
                 if (Regex.IsMatch(text, @"\b(?:на запчаст|на зп|части|parturi|piese)\w*\b"))
                     isCritical = true;
             }
 
-            // 2.5 Screen replaced
-            if (Regex.IsMatch(text, @"(?:меняный.*экран|экран.*менял|ecran schimbat|display schimbat|заменен.*экран|дисплей.*заменен|экран.*заменен|заменен.*дисплей)"))
+            // 3.5 Screen replaced (RO + RU)
+            if (Regex.IsMatch(text, @"(?:меняный.*экран|экран.*менял|ecran schimbat|display schimbat|ecran inlocuit|ecran înlocuit|заменен.*экран|дисплей.*заменен|экран.*заменен|заменен.*дисплей)"))
             {
-                defects.Add("Заменен дисплей (неоригинал)");
-                repairCost += 1000m; // Penalize for non-original screen
-            }
-
-            // 3. FaceID / TouchID / Sensors
-            if ((Regex.IsMatch(text, @"\b(?:faceid|face id|touchid|touch id|отпечат|сканер|распознаван)\w*") &&
-                 Regex.IsMatch(text, @"\b(?:не.*работ|ошибк|defect|неактив|не актив|nu func|nu luc|off)\w*\b")) ||
-                 Regex.IsMatch(text, @"\b(?:fara face|fără face|fara touch|fără touch|face id off)\w*\b"))
-            {
-                defects.Add("Не работает FaceID/TouchID");
+                defects.Add("Заменен дисплей (ecran schimbat)");
                 repairCost += 800m;
             }
 
-            // 4. Critical power / charging issues
-            if (Regex.IsMatch(text, @"\b(?:не заряжается|не заряж|заряд.*не|power.*issue|плохая зарядка|зарядка не)\w*\b"))
+            // 4. FaceID / TouchID / Biometrics / Amprenta (RO + RU + EN)
+            // «nu lucrează face id», «nu lucrează amprenta», «fără amprentă», «amprenta defectă», «face id nu merge»
+            if (Regex.IsMatch(text, @"(?:nu.*lucreaz[aă].*face|nu.*lucreaz[aă].*amprent|f[aă]r[aă].*amprent|amprent[aă].*defect|face.*id.*nu.*merge|amprent[aă].*nu.*merge|nu.*cite[sș]te.*amprent|f[aă]r[aă].*face.*id)") ||
+                ((Regex.IsMatch(text, @"\b(?:faceid|face id|touchid|touch id|отпечат|сканер|распознаван|amprent)\w*") &&
+                  Regex.IsMatch(text, @"\b(?:не.*работ|ошибк|defect|неактив|не актив|nu func|nu luc|off|nu merge)\w*\b")) ||
+                  Regex.IsMatch(text, @"\b(?:fara face|fără face|fara touch|fără touch|face id off)\w*\b")))
             {
-                defects.Add("Проблемы с зарядкой");
-                repairCost += 500m;
-                if (Regex.IsMatch(text, @"\b(?:не включается|не заряжается|разблокировать|на запчаст)\w*\b"))
-                    isCritical = true;
+                defects.Add("Не работает FaceID/TouchID/Amprenta");
+                repairCost += 700m;
             }
 
-            // 5. Battery Health
-            if (Regex.IsMatch(text, @"\b(?:вздут|надул|не.*держит|мертв|dead|schimbat|менял|заменен|требует.*замен|service)\w*\b") &&
-                Regex.IsMatch(text, @"(?:акб|battery|батаре|bateri)\w*"))
+            // 5. Battery Health / АКБ (RO + RU + EN)
+            // «bateria ține puțin», «necesită schimb baterie», «baterie slabă», «baterie descărcată», «baterie degradată», «schimb acumulator»
+            if (Regex.IsMatch(text, @"(?:bateria.*[tț]ine.*pu[tț]in|necesit[aă].*schimb.*bateri|baterie.*slab[aă]|baterie.*desc[aă]rcat[aă]|baterie.*uzat[aă]|baterie.*degradat[aă]|schimb.*acumulator|baterie.*moart[aă])") ||
+                (Regex.IsMatch(text, @"\b(?:вздут|надул|не.*держит|мертв|dead|schimbat|менял|заменен|требует.*замен|service|ține puțin|tine putin)\w*\b") &&
+                 Regex.IsMatch(text, @"(?:акб|battery|батаре|bateri|acumulator)\w*")))
             {
-                defects.Add("Требуется замена АКБ");
-                repairCost += 800m;
+                defects.Add("Требуется замена АКБ (schimb baterie)");
+                repairCost += 400m;
             }
             else if (brand.Equals("Apple", StringComparison.OrdinalIgnoreCase))
             {
@@ -522,36 +578,39 @@ namespace SmartphoneMonitor.Services
                 }
             }
 
-            // 6. Back glass / cover damage
-            if (Regex.IsMatch(text, @"\b(?:задн|крышк|back|spate)\w*\b") &&
-                Regex.IsMatch(text, @"\b(?:разбит|трещин|spart|crap|defect)\w*\b"))
+            // 6. Camera issues (RO + RU + EN)
+            if (Regex.IsMatch(text, @"(?:camera.*defect[aă]|sticl[aă].*la.*camer|nu.*focalizeaz[aă]|camera.*nu.*lucreaz[aă]|camera.*tremur[aă])") ||
+                (Regex.IsMatch(text, @"(?:камер|camer)\w*") &&
+                 Regex.IsMatch(text, @"(?:мутн|тряс|не.*фокус|пятн|pete|defect|nu func|nu luc|разбит|spart)\w*")))
             {
-                defects.Add("Разбита задняя крышка");
-                repairCost += 1200m;
+                defects.Add("Дефект камеры (defect cameră)");
+                repairCost += brand.Equals("Apple", StringComparison.OrdinalIgnoreCase) ? 1500m : 800m;
             }
 
-            // 7. Camera issues
-            if (Regex.IsMatch(text, @"(?:камер|camer)\w*") &&
-                Regex.IsMatch(text, @"(?:мутн|тряс|не.*фокус|пятн|pete|defect|nu func|nu luc|разбит|spart)\w*"))
+            // 7. Charging port / Power issues (RO + RU + EN)
+            if (Regex.IsMatch(text, @"(?:nu.*se.*[iî]ncarc[aă]|muf[aă].*defect[aă]|probleme.*[iî]nc[aă]rcare|nu.*[tț]ine.*[iî]nc[aă]rcarea)") ||
+                Regex.IsMatch(text, @"\b(?:не заряжается|не заряж|заряд.*не|power.*issue|плохая зарядка|зарядка не|mufa)\w*\b"))
             {
-                defects.Add("Дефект камеры");
-                repairCost += 1800m;
+                defects.Add("Проблемы с зарядкой / разъемом (port încărcare)");
+                repairCost += 350m;
+                if (Regex.IsMatch(text, @"\b(?:не включается|не зажига|на запчаст)\w*\b"))
+                    isCritical = true;
             }
 
             // 8. Replica / non-original / fake devices
             if (Regex.IsMatch(text, @"\b(?:копия|реплика|fake|non[- ]?original|неоригинал|не оригинал|оригинал\?|non functional|clone)\w*\b"))
             {
-                defects.Add("Непроверенный / копия");
+                defects.Add("Непроверенный / копия (clone)");
                 repairCost += 800m;
                 isCritical = true;
             }
 
             // 9. Minor condition and wear
-            if (Regex.IsMatch(text, @"\b(?:царап|вмят|скол|потертост|искривлен|люфт|сломанный)\w*\b") &&
+            if (Regex.IsMatch(text, @"\b(?:царап|вмят|скол|потертост|искривлен|люфт|sloit|zgariet|zgâriet)\w*\b") &&
                 !Regex.IsMatch(text, @"\b(?:стекл.*защит|защитн.*стекл|pelicul|protector)\w*\b"))
             {
-                defects.Add("Визуальные дефекты корпуса");
-                repairCost += 300m;
+                defects.Add("Визуальные дефекты корпуса (zgârieturi)");
+                repairCost += 200m;
             }
 
             if (Regex.IsMatch(text, @"\b(?:нерабоч|не.*работ|не работает|глюч|глюк|через раз|не включа|не зажига|не отвечает)\w*\b"))
@@ -561,9 +620,9 @@ namespace SmartphoneMonitor.Services
                 isCritical = true;
             }
 
-            if (!isCritical && defects.Count == 0 && Regex.IsMatch(text, @"\b(на запчасти|запчасти|parts only|for parts)\b"))
+            if (!isCritical && defects.Count == 0 && Regex.IsMatch(text, @"\b(на запчасти|запчасти|parts only|for parts|piese|la piese|pentru piese)\b"))
             {
-                defects.Add("На запчасти");
+                defects.Add("На запчасти (la piese)");
                 repairCost += 1000m;
                 isCritical = true;
             }

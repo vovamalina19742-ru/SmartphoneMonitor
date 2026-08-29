@@ -53,6 +53,30 @@ namespace SmartphoneMonitor.Services
             score += listing.IsUrgent ? 5.0 : 0.0;
             score += GetBatteryHealthScore(listing.Brand, listing.BatteryHealth);
 
+            // 1. Hard Penalty: Reseller / Commercial showcase
+            bool isReseller = listing.SellerType.Equals("RESELLER", StringComparison.OrdinalIgnoreCase) ||
+                              listing.IsCommercial ||
+                              listing.NewSmartphoneCategory == "Reseller";
+            if (isReseller)
+            {
+                score -= 50.0;
+            }
+            else if (listing.SellerType.Equals("FRESH_PRIVATE", StringComparison.OrdinalIgnoreCase) || listing.NewSmartphoneCategory == "FreshPrivate")
+            {
+                score += 5.0; // Trust bonus for fresh private seller (real owner, high discount potential)
+            }
+
+            // 2. Hard Penalty: Device Age
+            int ageYears = ModelPriceBaselineService.EstimateDeviceAgeYears(listing.Brand, listing.Model, listing.Title);
+            if (ageYears >= 5)
+            {
+                score -= 25.0; // Penalty for 5+ years old (EOL, hardware wear)
+            }
+            else if (ageYears >= 3)
+            {
+                score -= 15.0; // Penalty for 3-4 years old
+            }
+
             var osService = new XiaomiOsSupportService();
             var osSupport = osService.AnalyzeModel(listing.Title);
             if (osSupport.IsXiaomiDevice)
@@ -85,27 +109,34 @@ namespace SmartphoneMonitor.Services
             {
                 foreach (var defect in listing.Defects)
                 {
-                    if (defect == "Не работает FaceID/TouchID")
+                    if (defect.Contains("FaceID") || defect.Contains("Amprenta"))
                     {
-                        score -= 45.0;
-                        hasSevereHardwareDefect = true;
+                        score -= 25.0;
                     }
-                    else if (defect == "Заменен дисплей (неоригинал)")
+                    else if (defect.Contains("Заменен дисплей") || defect.Contains("schimbat"))
                     {
-                        score -= 30.0;
+                        score -= 20.0;
                         hasRepairsOrNonOriginalParts = true;
                     }
-                    else if (defect == "Разбита задняя крышка" || defect == "Разбит/поврежден дисплей или стекло")
+                    else if (defect.Contains("задняя крышка") || defect.Contains("capac"))
+                    {
+                        score -= 15.0; // Cosmetic repairable defect (not severe!)
+                    }
+                    else if (defect.Contains("АКБ") || defect.Contains("baterie"))
+                    {
+                        score -= 10.0; // Battery wear / replacement
+                    }
+                    else if (defect.Contains("дисплей") || defect.Contains("ecran") || defect.Contains("стекло (ecran"))
                     {
                         score -= 40.0;
                         hasSevereHardwareDefect = true;
                     }
-                    else if (defect == "Серьёзные проблемы в работе" || defect == "Дефект камеры")
+                    else if (defect.Contains("Серьёзные проблемы") || defect.Contains("Дефект камеры"))
                     {
-                        score -= 50.0;
+                        score -= 35.0;
                         hasSevereHardwareDefect = true;
                     }
-                    else if (defect == "Непроверенный / копия")
+                    else if (defect.Contains("копия") || defect.Contains("clone"))
                     {
                         score -= 50.0;
                         hasSevereHardwareDefect = true;
@@ -118,7 +149,7 @@ namespace SmartphoneMonitor.Services
 
                 if (hasRepairsOrNonOriginalParts)
                 {
-                    if (score > 55.0) score = 55.0; // Hard cap for repairs
+                    if (score > 60.0) score = 60.0; // Hard cap for repairs
                 }
 
                 if (hasSevereHardwareDefect)
@@ -149,6 +180,14 @@ namespace SmartphoneMonitor.Services
             else if (listing.HasCriticalDefect)
             {
                 if (score > 25.0) score = 25.0; // Critical defect caps at 25
+            }
+            else if (isReseller)
+            {
+                if (score > 40.0) score = 40.0; // Resellers hard capped at 40
+            }
+            else if (ageYears >= 5)
+            {
+                if (score > 65.0) score = 65.0; // 5+ year old devices hard capped at 65
             }
 
             return Math.Max(0.0, Math.Min(100.0, score));

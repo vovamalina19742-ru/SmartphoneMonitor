@@ -134,11 +134,39 @@ namespace SmartphoneMonitor.Services
                                 alterCmd.ExecuteNonQuery();
                             }
                         }
+                        if (!cols.Contains("AuthorLogin"))
+                        {
+                            using (var alterCmd = connection.CreateCommand())
+                            {
+                                alterCmd.CommandText = "ALTER TABLE PriceHistory ADD COLUMN AuthorLogin TEXT;";
+                                alterCmd.ExecuteNonQuery();
+                            }
+                        }
+                        if (!cols.Contains("PhoneNumber"))
+                        {
+                            using (var alterCmd = connection.CreateCommand())
+                            {
+                                alterCmd.CommandText = "ALTER TABLE PriceHistory ADD COLUMN PhoneNumber TEXT;";
+                                alterCmd.ExecuteNonQuery();
+                            }
+                        }
+                        if (!cols.Contains("SellerType"))
+                        {
+                            using (var alterCmd = connection.CreateCommand())
+                            {
+                                alterCmd.CommandText = "ALTER TABLE PriceHistory ADD COLUMN SellerType TEXT;";
+                                alterCmd.ExecuteNonQuery();
+                            }
+                        }
 
                         // Create search index after all migrations succeeded
                         using (var indexCmd = connection.CreateCommand())
                         {
-                            indexCmd.CommandText = "CREATE INDEX IF NOT EXISTS idx_price_history_search ON PriceHistory(Brand, StorageGB);";
+                            indexCmd.CommandText = @"
+                                CREATE INDEX IF NOT EXISTS idx_price_history_search ON PriceHistory(Brand, StorageGB);
+                                CREATE INDEX IF NOT EXISTS idx_price_history_author ON PriceHistory(AuthorLogin);
+                                CREATE INDEX IF NOT EXISTS idx_price_history_phone ON PriceHistory(PhoneNumber);
+                            ";
                             indexCmd.ExecuteNonQuery();
                         }
                     }
@@ -297,8 +325,8 @@ namespace SmartphoneMonitor.Services
                     {
                         command.Transaction = transaction;
                         command.CommandText = @"
-                            INSERT OR REPLACE INTO PriceHistory (Url, Title, Brand, StorageGB, Price, LastUpdated, ImageUrls)
-                            VALUES ($url, $title, $brand, $storage, $price, $date, $images);
+                            INSERT OR REPLACE INTO PriceHistory (Url, Title, Brand, StorageGB, Price, LastUpdated, ImageUrls, AuthorLogin, PhoneNumber, SellerType)
+                            VALUES ($url, $title, $brand, $storage, $price, $date, $images, $author, $phone, $sellerType);
                         ";
                         
                         var urlParam = command.Parameters.Add("$url", SqliteType.Text);
@@ -308,6 +336,9 @@ namespace SmartphoneMonitor.Services
                         var priceParam = command.Parameters.Add("$price", SqliteType.Real);
                         var dateParam = command.Parameters.Add("$date", SqliteType.Text);
                         var imagesParam = command.Parameters.Add("$images", SqliteType.Text);
+                        var authorParam = command.Parameters.Add("$author", SqliteType.Text);
+                        var phoneParam = command.Parameters.Add("$phone", SqliteType.Text);
+                        var sellerTypeParam = command.Parameters.Add("$sellerType", SqliteType.Text);
 
                         string now = DateTime.Now.ToString("o");
 
@@ -324,6 +355,9 @@ namespace SmartphoneMonitor.Services
                                 imagesParam.Value = (l.ImageUrls != null && l.ImageUrls.Count > 0)
                                     ? Newtonsoft.Json.JsonConvert.SerializeObject(l.ImageUrls)
                                     : string.Empty;
+                                authorParam.Value = l.AuthorLogin ?? string.Empty;
+                                phoneParam.Value = ListingClassifier.NormalizePhone(l.PhoneNumber ?? "");
+                                sellerTypeParam.Value = l.SellerType ?? string.Empty;
                                 command.ExecuteNonQuery();
                             }
                         }
@@ -331,6 +365,348 @@ namespace SmartphoneMonitor.Services
                     transaction.Commit();
                 }
             }
+        }
+
+        public int GetAuthorListingCount(string? authorLogin, string? phoneNumber)
+        {
+            if (string.IsNullOrEmpty(authorLogin) && string.IsNullOrEmpty(phoneNumber))
+                return 0;
+
+            string normPhone = ListingClassifier.NormalizePhone(phoneNumber ?? "");
+
+            using (var connection = new SqliteConnection(_connectionString))
+            {
+                connection.Open();
+                using (var command = connection.CreateCommand())
+                {
+                    command.CommandText = @"
+                        SELECT COUNT(DISTINCT Url) 
+                        FROM PriceHistory 
+                        WHERE (AuthorLogin = $login AND $login != '') 
+                           OR (PhoneNumber = $phone AND $phone != '');
+                    ";
+                    command.Parameters.AddWithValue("$login", authorLogin ?? "");
+                    command.Parameters.AddWithValue("$phone", normPhone);
+                    var result = command.ExecuteScalar();
+                    if (result != null && result != DBNull.Value)
+                    {
+                        return Convert.ToInt32(result);
+                    }
+                }
+            }
+            return 0;
+        }
+
+        public (List<Listing> newListings, List<Listing> priceDropListings) ProcessIncrementalIngestion(List<Listing> listings)
+        {
+            var newListings = new List<Listing>();
+            var priceDropListings = new List<Listing>();
+            if (listings == null || listings.Count == 0) return (newListings, priceDropListings);
+
+            using (var connection = new SqliteConnection(_connectionString))
+            {
+                connection.Open();
+                using (var transaction = connection.BeginTransaction())
+                {
+                    using (var selectCmd = connection.CreateCommand())
+                    using (var insertCmd = connection.CreateCommand())
+                    using (var updatePriceCmd = connection.CreateCommand())
+                    using (var touchCmd = connection.CreateCommand())
+                    using (var countAuthorCmd = connection.CreateCommand())
+                    {
+                        selectCmd.Transaction = transaction;
+                        selectCmd.CommandText = "SELECT Price FROM PriceHistory WHERE Url = $url;";
+                        var selectUrlParam = selectCmd.Parameters.Add("$url", SqliteType.Text);
+
+                        insertCmd.Transaction = transaction;
+                        insertCmd.CommandText = @"
+                            INSERT INTO PriceHistory (Url, Title, Brand, StorageGB, Price, LastUpdated, ImageUrls, AuthorLogin, PhoneNumber, SellerType)
+                            VALUES ($url, $title, $brand, $storage, $price, $date, $images, $author, $phone, $sellerType);
+                        ";
+                        var inUrl = insertCmd.Parameters.Add("$url", SqliteType.Text);
+                        var inTitle = insertCmd.Parameters.Add("$title", SqliteType.Text);
+                        var inBrand = insertCmd.Parameters.Add("$brand", SqliteType.Text);
+                        var inStorage = insertCmd.Parameters.Add("$storage", SqliteType.Integer);
+                        var inPrice = insertCmd.Parameters.Add("$price", SqliteType.Real);
+                        var inDate = insertCmd.Parameters.Add("$date", SqliteType.Text);
+                        var inImages = insertCmd.Parameters.Add("$images", SqliteType.Text);
+                        var inAuthor = insertCmd.Parameters.Add("$author", SqliteType.Text);
+                        var inPhone = insertCmd.Parameters.Add("$phone", SqliteType.Text);
+                        var inSellerType = insertCmd.Parameters.Add("$sellerType", SqliteType.Text);
+
+                        updatePriceCmd.Transaction = transaction;
+                        updatePriceCmd.CommandText = @"
+                            UPDATE PriceHistory 
+                            SET Price = $price, LastUpdated = $date, Title = $title, 
+                                ImageUrls = CASE WHEN $images != '' THEN $images ELSE ImageUrls END,
+                                AuthorLogin = CASE WHEN $author != '' THEN $author ELSE AuthorLogin END,
+                                PhoneNumber = CASE WHEN $phone != '' THEN $phone ELSE PhoneNumber END,
+                                SellerType = CASE WHEN $sellerType != '' THEN $sellerType ELSE SellerType END
+                            WHERE Url = $url;
+                        ";
+                        var upPrice = updatePriceCmd.Parameters.Add("$price", SqliteType.Real);
+                        var upDate = updatePriceCmd.Parameters.Add("$date", SqliteType.Text);
+                        var upTitle = updatePriceCmd.Parameters.Add("$title", SqliteType.Text);
+                        var upImages = updatePriceCmd.Parameters.Add("$images", SqliteType.Text);
+                        var upAuthor = updatePriceCmd.Parameters.Add("$author", SqliteType.Text);
+                        var upPhone = updatePriceCmd.Parameters.Add("$phone", SqliteType.Text);
+                        var upSellerType = updatePriceCmd.Parameters.Add("$sellerType", SqliteType.Text);
+                        var upUrl = updatePriceCmd.Parameters.Add("$url", SqliteType.Text);
+
+                        touchCmd.Transaction = transaction;
+                        touchCmd.CommandText = "UPDATE PriceHistory SET LastUpdated = $date WHERE Url = $url;";
+                        var touchDate = touchCmd.Parameters.Add("$date", SqliteType.Text);
+                        var touchUrl = touchCmd.Parameters.Add("$url", SqliteType.Text);
+
+                        countAuthorCmd.Transaction = transaction;
+                        countAuthorCmd.CommandText = @"
+                            SELECT COUNT(DISTINCT Url) 
+                            FROM PriceHistory 
+                            WHERE (AuthorLogin = $cAuthor AND $cAuthor != '') 
+                               OR (PhoneNumber = $cPhone AND $cPhone != '');
+                        ";
+                        var cAuthorParam = countAuthorCmd.Parameters.Add("$cAuthor", SqliteType.Text);
+                        var cPhoneParam = countAuthorCmd.Parameters.Add("$cPhone", SqliteType.Text);
+
+                        string now = DateTime.Now.ToString("o");
+
+                        foreach (var l in listings)
+                        {
+                            if (string.IsNullOrEmpty(l.Url) || l.PriceValue <= 0m)
+                                continue;
+
+                            try
+                            {
+                                selectUrlParam.Value = l.Url;
+                                decimal? dbPrice = null;
+                                using (var reader = selectCmd.ExecuteReader())
+                                {
+                                    if (reader.Read())
+                                    {
+                                        dbPrice = Convert.ToDecimal(reader.GetDouble(0));
+                                    }
+                                }
+
+                                string imagesJson = (l.ImageUrls != null && l.ImageUrls.Count > 0)
+                                    ? Newtonsoft.Json.JsonConvert.SerializeObject(l.ImageUrls)
+                                    : string.Empty;
+                                string normPhone = ListingClassifier.NormalizePhone(l.PhoneNumber ?? "");
+
+                                if (!dbPrice.HasValue)
+                                {
+                                    // 1. Новое объявление (Incremental Ingestion)
+                                    l.IsNewlyDiscovered = true;
+
+                                    // Проверяем историю автора в БД
+                                    cAuthorParam.Value = l.AuthorLogin ?? "";
+                                    cPhoneParam.Value = normPhone;
+                                    var countObj = countAuthorCmd.ExecuteScalar();
+                                    int priorAuthorListingCount = (countObj != null && countObj != DBNull.Value) ? Convert.ToInt32(countObj) : 0;
+
+                                    // Анализ нового аккаунта автора
+                                    bool isReseller = priorAuthorListingCount >= 2 ||
+                                                      ListingClassifier.IsResellerShowcase(l.Title, l.Description, l.AuthorLogin, priorAuthorListingCount) ||
+                                                      l.SellerType.Equals("Shop", StringComparison.OrdinalIgnoreCase) ||
+                                                      l.IsCommercial;
+
+                                    if (isReseller)
+                                    {
+                                        l.SellerType = "RESELLER";
+                                        l.IsCommercial = true;
+                                        l.NewSmartphoneCategory = "Reseller";
+                                    }
+                                    else if (priorAuthorListingCount == 0 && !l.IsCommercial && !l.IsNew)
+                                    {
+                                        // Свежий частный аккаунт без истории других продаж
+                                        l.SellerType = "FRESH_PRIVATE";
+                                        l.NewSmartphoneCategory = "FreshPrivate";
+                                    }
+
+                                    inUrl.Value = l.Url;
+                                    inTitle.Value = l.Title ?? string.Empty;
+                                    inBrand.Value = l.Brand ?? "Другие";
+                                    inStorage.Value = l.StorageGB;
+                                    inPrice.Value = (double)l.PriceValue;
+                                    inDate.Value = now;
+                                    inImages.Value = imagesJson;
+                                    inAuthor.Value = l.AuthorLogin ?? string.Empty;
+                                    inPhone.Value = normPhone;
+                                    inSellerType.Value = l.SellerType ?? string.Empty;
+                                    insertCmd.ExecuteNonQuery();
+
+                                    newListings.Add(l);
+                                }
+                                else
+                                {
+                                    // 2. Объявление уже было в базе
+                                    l.IsNewlyDiscovered = false;
+
+                                    if (l.PriceValue < dbPrice.Value)
+                                    {
+                                        // 📉 Снижение цены!
+                                        l.PreviousPrice = dbPrice.Value;
+                                        upPrice.Value = (double)l.PriceValue;
+                                        upDate.Value = now;
+                                        upTitle.Value = l.Title ?? string.Empty;
+                                        upImages.Value = imagesJson;
+                                        upAuthor.Value = l.AuthorLogin ?? string.Empty;
+                                        upPhone.Value = normPhone;
+                                        upSellerType.Value = l.SellerType ?? string.Empty;
+                                        upUrl.Value = l.Url;
+                                        updatePriceCmd.ExecuteNonQuery();
+
+                                        priceDropListings.Add(l);
+                                    }
+                                    else
+                                    {
+                                        touchDate.Value = now;
+                                        touchUrl.Value = l.Url;
+                                        touchCmd.ExecuteNonQuery();
+                                    }
+                                }
+                            }
+                            catch { }
+                        }
+                    }
+                    transaction.Commit();
+                }
+            }
+            return (newListings, priceDropListings);
+        }
+
+        public List<ListingStateEvent> ProcessListingsStateMachineBatch(List<Listing> listings)
+        {
+            var events = new List<ListingStateEvent>();
+            if (listings == null || listings.Count == 0) return events;
+
+            using (var connection = new SqliteConnection(_connectionString))
+            {
+                connection.Open();
+                using (var transaction = connection.BeginTransaction())
+                {
+                    using (var selectCmd = connection.CreateCommand())
+                    using (var insertCmd = connection.CreateCommand())
+                    using (var updatePriceCmd = connection.CreateCommand())
+                    using (var touchCmd = connection.CreateCommand())
+                    {
+                        selectCmd.Transaction = transaction;
+                        selectCmd.CommandText = "SELECT Price FROM PriceHistory WHERE Url = $url;";
+                        var selectUrlParam = selectCmd.Parameters.Add("$url", SqliteType.Text);
+
+                        insertCmd.Transaction = transaction;
+                        insertCmd.CommandText = @"
+                            INSERT INTO PriceHistory (Url, Title, Brand, StorageGB, Price, LastUpdated, ImageUrls)
+                            VALUES ($url, $title, $brand, $storage, $price, $date, $images);
+                        ";
+                        var inUrl = insertCmd.Parameters.Add("$url", SqliteType.Text);
+                        var inTitle = insertCmd.Parameters.Add("$title", SqliteType.Text);
+                        var inBrand = insertCmd.Parameters.Add("$brand", SqliteType.Text);
+                        var inStorage = insertCmd.Parameters.Add("$storage", SqliteType.Integer);
+                        var inPrice = insertCmd.Parameters.Add("$price", SqliteType.Real);
+                        var inDate = insertCmd.Parameters.Add("$date", SqliteType.Text);
+                        var inImages = insertCmd.Parameters.Add("$images", SqliteType.Text);
+
+                        updatePriceCmd.Transaction = transaction;
+                        updatePriceCmd.CommandText = @"
+                            UPDATE PriceHistory 
+                            SET Price = $price, LastUpdated = $date, Title = $title, ImageUrls = CASE WHEN $images != '' THEN $images ELSE ImageUrls END
+                            WHERE Url = $url;
+                        ";
+                        var upPrice = updatePriceCmd.Parameters.Add("$price", SqliteType.Real);
+                        var upDate = updatePriceCmd.Parameters.Add("$date", SqliteType.Text);
+                        var upTitle = updatePriceCmd.Parameters.Add("$title", SqliteType.Text);
+                        var upImages = updatePriceCmd.Parameters.Add("$images", SqliteType.Text);
+                        var upUrl = updatePriceCmd.Parameters.Add("$url", SqliteType.Text);
+
+                        touchCmd.Transaction = transaction;
+                        touchCmd.CommandText = "UPDATE PriceHistory SET LastUpdated = $date WHERE Url = $url;";
+                        var touchDate = touchCmd.Parameters.Add("$date", SqliteType.Text);
+                        var touchUrl = touchCmd.Parameters.Add("$url", SqliteType.Text);
+
+                        string now = DateTime.Now.ToString("o");
+
+                        foreach (var l in listings)
+                        {
+                            if (string.IsNullOrEmpty(l.Url) || l.PriceValue <= 0m)
+                                continue;
+
+                            try
+                            {
+                                selectUrlParam.Value = l.Url;
+                                var existingObj = selectCmd.ExecuteScalar();
+
+                                string imagesJson = (l.ImageUrls != null && l.ImageUrls.Count > 0)
+                                    ? Newtonsoft.Json.JsonConvert.SerializeObject(l.ImageUrls)
+                                    : string.Empty;
+
+                                if (existingObj == null || existingObj == DBNull.Value)
+                                {
+                                    // Сценарий А: Новое объявление
+                                    inUrl.Value = l.Url;
+                                    inTitle.Value = l.Title ?? string.Empty;
+                                    inBrand.Value = l.Brand ?? "Другие";
+                                    inStorage.Value = l.StorageGB;
+                                    inPrice.Value = (double)l.PriceValue;
+                                    inDate.Value = now;
+                                    inImages.Value = imagesJson;
+                                    insertCmd.ExecuteNonQuery();
+
+                                    events.Add(new ListingStateEvent
+                                    {
+                                        Type = ListingEventType.NewListing,
+                                        Url = l.Url,
+                                        Title = l.Title ?? string.Empty,
+                                        Brand = l.Brand ?? "Другие",
+                                        CurrentPrice = l.PriceValue,
+                                        OldPrice = null
+                                    });
+                                }
+                                else
+                                {
+                                    // Сценарий Б: Существующее объявление
+                                    decimal dbPrice = Convert.ToDecimal(existingObj, System.Globalization.CultureInfo.InvariantCulture);
+
+                                    if (l.PriceValue < dbPrice)
+                                    {
+                                        // 📉 Снижение цены!
+                                        upPrice.Value = (double)l.PriceValue;
+                                        upDate.Value = now;
+                                        upTitle.Value = l.Title ?? string.Empty;
+                                        upImages.Value = imagesJson;
+                                        upUrl.Value = l.Url;
+                                        updatePriceCmd.ExecuteNonQuery();
+
+                                        events.Add(new ListingStateEvent
+                                        {
+                                            Type = ListingEventType.PriceDrop,
+                                            Url = l.Url,
+                                            Title = l.Title ?? string.Empty,
+                                            Brand = l.Brand ?? "Другие",
+                                            CurrentPrice = l.PriceValue,
+                                            OldPrice = dbPrice
+                                        });
+                                    }
+                                    else
+                                    {
+                                        // Цена прежняя или выросла — обновляем только LastUpdated
+                                        touchDate.Value = now;
+                                        touchUrl.Value = l.Url;
+                                        touchCmd.ExecuteNonQuery();
+                                    }
+                                }
+                            }
+                            catch (Exception ex)
+                            {
+                                Serilog.Log.Error(ex, "Error processing listing in state machine: {Url}", l.Url);
+                            }
+                        }
+
+                        transaction.Commit();
+                    }
+                }
+            }
+
+            return events;
         }
 
         public List<string> GetCachedImageUrls(string url)

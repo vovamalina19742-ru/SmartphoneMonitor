@@ -299,6 +299,28 @@ namespace SmartphoneMonitor.Services
             return Constants.CommercialMarkers.Any(marker => text.Contains(marker, StringComparison.OrdinalIgnoreCase));
         }
 
+        public static bool IsResellerShowcase(string title, string? description, string authorLogin, int authorListingCount)
+        {
+            if (authorListingCount >= 2)
+            {
+                return true;
+            }
+
+            string text = ((title ?? "") + " " + (description ?? "")).ToLowerInvariant();
+
+            string[] resellerPatterns = new string[]
+            {
+                "9.9/10", "10/10", "9,9/10", "9.8/10", "9.5/10", "stare 10/10", "stare 9.9/10",
+                "stare ideala", "состояние 9.9", "состояние 10/10", "как новый 9.9", "9.9 из 10", "10 из 10",
+                "vitrina", "витрина", "din vitrina", "с витрины", "schimb", "обмен",
+                "in credit", "в кредит", "credit 0%", "rate 0%", "trade in", "trade-in",
+                "garantie magazin", "гарантия магазина", "livrare toata moldova", "livrare rapida",
+                "toata tara", "husa cadou", "sticla cadou", "чехол в подарок", "стекло в подарок"
+            };
+
+            return resellerPatterns.Any(p => text.Contains(p));
+        }
+
         public static string DetermineNewSmartphoneCategory(string sellerName, string sellerType, bool isCommercial, bool isNew, string url = "")
         {
             string normSeller = (sellerName ?? "").ToLowerInvariant();
@@ -312,9 +334,24 @@ namespace SmartphoneMonitor.Services
                 return "RetailChain";
             }
 
+            if (sellerType != null && sellerType.Equals("RESELLER", StringComparison.OrdinalIgnoreCase))
+            {
+                return "Reseller";
+            }
+
+            if (sellerType != null && sellerType.Equals("FRESH_PRIVATE", StringComparison.OrdinalIgnoreCase))
+            {
+                return "FreshPrivate";
+            }
+
             if ((isCommercial || (sellerType != null && sellerType.Equals("Shop", StringComparison.OrdinalIgnoreCase))) && isNew)
             {
                 return "Shop999";
+            }
+
+            if (isCommercial)
+            {
+                return "Reseller";
             }
 
             if (!isCommercial && isNew)

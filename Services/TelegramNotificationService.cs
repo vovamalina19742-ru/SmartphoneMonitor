@@ -226,6 +226,71 @@ namespace SmartphoneMonitor.Services
             }
         }
 
+        public async Task<bool> SendListingAlertAsync(string token, string chatId, ListingStateEvent evt)
+        {
+            if (string.IsNullOrEmpty(token) || string.IsNullOrEmpty(chatId) || evt == null)
+                return false;
+
+            try
+            {
+                string url = $"https://api.telegram.org/bot{token}/sendMessage";
+                var sb = new StringBuilder();
+
+                if (evt.Type == ListingEventType.NewListing)
+                {
+                    sb.AppendLine("🆕 <b>Новое объявление!</b>");
+                    sb.AppendLine($"📱 <b>Модель:</b> {EscapeHtml(evt.Brand)} {EscapeHtml(evt.Title)}");
+                    sb.AppendLine($"💰 <b>Цена:</b> {evt.CurrentPrice:N0} MDL");
+                    sb.AppendLine($"🔗 <a href=\"{evt.Url}\">Открыть на сайте</a>");
+                }
+                else
+                {
+                    decimal oldPrice = evt.OldPrice ?? evt.CurrentPrice;
+                    decimal diff = evt.PriceDiff;
+                    double percent = evt.PriceDiffPercent;
+
+                    sb.AppendLine("📉 <b>Цена снижена!</b>");
+                    sb.AppendLine($"📱 <b>Модель:</b> {EscapeHtml(evt.Brand)} {EscapeHtml(evt.Title)}");
+                    sb.AppendLine($"🏷 <b>Старая цена:</b> <s>{oldPrice:N0}</s> MDL");
+                    sb.AppendLine($"🔥 <b>Новая цена:</b> <b>{evt.CurrentPrice:N0} MDL</b> (-{diff:N0} MDL / <b>-{percent:F1}%</b>)");
+                    sb.AppendLine($"🔗 <a href=\"{evt.Url}\">Открыть на сайте</a>");
+                }
+
+                var buttons = new List<object[]>
+                {
+                    new object[]
+                    {
+                        new { text = "🔗 Открыть на 999.md", url = evt.Url }
+                    }
+                };
+
+                var payload = new
+                {
+                    chat_id = chatId,
+                    text = sb.ToString(),
+                    parse_mode = "HTML",
+                    disable_web_page_preview = false,
+                    reply_markup = new { inline_keyboard = buttons.ToArray() }
+                };
+
+                var content = new StringContent(JsonConvert.SerializeObject(payload), Encoding.UTF8, "application/json");
+                var response = await _httpClient.PostAsync(url, content);
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    string err = await response.Content.ReadAsStringAsync();
+                    Log.Warning("SendListingAlertAsync failed ({Code}): {Error}", response.StatusCode, err);
+                }
+
+                return response.IsSuccessStatusCode;
+            }
+            catch (Exception ex)
+            {
+                Log.Error(ex, "SendListingAlertAsync exception");
+                return false;
+            }
+        }
+
         public Task SendMessageAsync(string text)
         {
             Log.Warning("Telegram not configured — cannot send: {Text}", text);
