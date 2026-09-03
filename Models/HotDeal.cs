@@ -305,5 +305,24 @@ namespace SmartphoneMonitor.Models
                 }
             }
         }
+
+        private QuantEvaluationResult? _quantEvaluation;
+        public QuantEvaluationResult? QuantEvaluation
+        {
+            get => _quantEvaluation;
+            set
+            {
+                if (_quantEvaluation != value)
+                {
+                    _quantEvaluation = value;
+                    OnPropertyChanged(nameof(QuantEvaluation));
+                    OnPropertyChanged(nameof(QuantBadgeText));
+                    OnPropertyChanged(nameof(QuantBadgeColor));
+                }
+            }
+        }
+
+        public string QuantBadgeText => QuantEvaluation?.BadgeText ?? "";
+        public string QuantBadgeColor => QuantEvaluation?.BadgeColor ?? "#6B7280";
     }
 }

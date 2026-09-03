@@ -5,7 +5,7 @@ namespace SmartphoneMonitor.Services
 {
     public static class HotDealBuilder
     {
-        public static HotDeal Create(Listing listing, double recommendationScore, decimal referencePrice, double discountPercent)
+        public static HotDeal Create(Listing listing, double recommendationScore, decimal referencePrice, double discountPercent, QuantEvaluationResult? quantEvaluation = null)
         {
             string titlePrefix = (listing.Defects != null && listing.Defects.Count > 0)
                 ? $"⚠️ [РИСК: {recommendationScore:F0}/100] "
@@ -41,7 +41,8 @@ namespace SmartphoneMonitor.Services
                 RetailSavingsPercent = listing.RetailSavingsPercent,
                 RecommendedResellPrice = listing.RecommendedResellPrice,
                 AiReasoning = listing.AiReasoning,
-                ImageUrls = listing.ImageUrls
+                ImageUrls = listing.ImageUrls,
+                QuantEvaluation = quantEvaluation
             };
         }
 

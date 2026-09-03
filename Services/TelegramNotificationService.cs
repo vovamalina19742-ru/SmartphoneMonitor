@@ -130,6 +130,13 @@ namespace SmartphoneMonitor.Services
                 string marketType = deal.IsNew ? "Рынок новых" : "Рынок б/у";
                 sb.AppendLine($"<b>Цена:</b> {deal.PriceValue:F0} MDL ({marketType}: {deal.BrandMedian:F0} MDL, Скидка: {deal.DiscountPercent:F0}%)");
 
+                if (deal.QuantEvaluation != null)
+                {
+                    sb.AppendLine($"<b>📊 Квант-оценка:</b> {EscapeHtml(deal.QuantEvaluation.BadgeText)} (Индекс: {deal.QuantEvaluation.QuantScore}/100)");
+                    if (deal.QuantEvaluation.FairValuePrice > 0)
+                        sb.AppendLine($"<b>Fair Value (Справедливая):</b> {deal.QuantEvaluation.FairValuePrice:F0} MDL");
+                }
+
                 if (deal.NetProfitMargin > 0m)
                     sb.AppendLine($"<b>Чистая маржа:</b> +{deal.NetProfitMargin:F0} MDL");
 
