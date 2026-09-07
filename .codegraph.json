@@ -1,0 +1,1053 @@
+{
+  "project": "SmartphoneMonitor",
+  "language": "C# / WPF .NET",
+  "files_count": 56,
+  "types_indexed": [
+    "ModelPriceBaselineService",
+    "MainViewModel",
+    "MatchingClientService",
+    "PriceAnalysisResult",
+    "ModelPriceInfo",
+    "MetricsService",
+    "ScraperAgent",
+    "MetricsRepository",
+    "BlacklistEntry",
+    "ViewsBucket",
+    "BoolToHiddenConverter",
+    "XiaomiOsSupportService",
+    "LlmAnalysisResponse",
+    "RetryFailedNotificationsAgent",
+    "ChronicSellerService",
+    "BrandSpikeAgent",
+    "AnalysisAgent",
+    "PromoMatchingUnitTests",
+    "BlacklistLoginEntry",
+    "FailedNotificationEntry",
+    "PriceTrend",
+    "IntEqualsConverter",
+    "App",
+    "GeneralModelKey",
+    "ListingEvaluationService",
+    "DataAnalysisService",
+    "ModelPriceBaselineInfo",
+    "BoolToColorConverter",
+    "BoolToVisibilityConverter",
+    "ExactModelKey",
+    "Constants",
+    "BrandStat",
+    "AnalysisResult",
+    "DemandListing",
+    "AIVisionService",
+    "PromoMatchingTests",
+    "DatabaseService",
+    "PromoKeyHelper",
+    "DemandArbitrageDeal",
+    "ModelPriceBaselineTests",
+    "NotificationAgent",
+    "ListingClassifier",
+    "PercentWidthConverter",
+    "IntEqToFgConverter",
+    "HotDealBuilder",
+    "MainWindow",
+    "HotDeal",
+    "ClassificationService",
+    "QuantEvaluationResult",
+    "RetailPromoPrice",
+    "OsSupportStatus",
+    "ClassificationResult",
+    "IntEqToBrushConverter",
+    "PriceAnalysisWindow",
+    "PriceBucket",
+    "PromoScoringUnitTests",
+    "ExchangeRateService",
+    "TelegramNotificationService",
+    "QuantSniperEngine",
+    "ListingEventType",
+    "CharmPricingService",
+    "Listing",
+    "ListingStateEvent",
+    "QuantRating",
+    "RelayCommand",
+    "PriceAnalysisService",
+    "NotificationWindow",
+    "WebScraperService",
+    "PhotoHashRecord",
+    "ModelParserService",
+    "ZeroToHiddenConverter",
+    "ChronicSeller",
+    "FailedNotification",
+    "XiaomiOsSupportPolicyConfig",
+    "RetailPromoService",
+    "AntiScamService",
+    "PromoSyncAgent"
+  ],
+  "nodes": [
+    {
+      "id": "App.xaml",
+      "path": "App.xaml",
+      "type": "XAML Layout",
+      "classes": [],
+      "methods_count": 0,
+      "key_methods": []
+    },
+    {
+      "id": "App.xaml.cs",
+      "path": "App.xaml.cs",
+      "type": "C# Source",
+      "classes": [
+        {
+          "kind": "class",
+          "name": "App"
+        }
+      ],
+      "methods_count": 2,
+      "key_methods": [
+        "StartPythonService",
+        "StopPythonService"
+      ]
+    },
+    {
+      "id": "MainWindow.xaml",
+      "path": "MainWindow.xaml",
+      "type": "XAML Layout",
+      "classes": [],
+      "methods_count": 0,
+      "key_methods": []
+    },
+    {
+      "id": "MainWindow.xaml.cs",
+      "path": "MainWindow.xaml.cs",
+      "type": "C# Source",
+      "classes": [
+        {
+          "kind": "class",
+          "name": "MainWindow"
+        }
+      ],
+      "methods_count": 0,
+      "key_methods": []
+    },
+    {
+      "id": "Converters/Converters.cs",
+      "path": "Converters/Converters.cs",
+      "type": "C# Source",
+      "classes": [
+        {
+          "kind": "class",
+          "name": "PercentWidthConverter"
+        },
+        {
+          "kind": "class",
+          "name": "BoolToVisibilityConverter"
+        },
+        {
+          "kind": "class",
+          "name": "BoolToHiddenConverter"
+        },
+        {
+          "kind": "class",
+          "name": "BoolToColorConverter"
+        },
+        {
+          "kind": "class",
+          "name": "ZeroToHiddenConverter"
+        },
+        {
+          "kind": "class",
+          "name": "IntEqualsConverter"
+        },
+        {
+          "kind": "class",
+          "name": "IntEqToBrushConverter"
+        },
+        {
+          "kind": "class",
+          "name": "IntEqToFgConverter"
+        }
+      ],
+      "methods_count": 18,
+      "key_methods": [
+        "Convert",
+        "ConvertBack",
+        "Convert",
+        "ConvertBack",
+        "Convert"
+      ]
+    },
+    {
+      "id": "Models/AnalysisResult.cs",
+      "path": "Models/AnalysisResult.cs",
+      "type": "C# Source",
+      "classes": [
+        {
+          "kind": "class",
+          "name": "AnalysisResult"
+        }
+      ],
+      "methods_count": 0,
+      "key_methods": []
+    },
+    {
+      "id": "Models/BlacklistEntry.cs",
+      "path": "Models/BlacklistEntry.cs",
+      "type": "C# Source",
+      "classes": [
+        {
+          "kind": "class",
+          "name": "BlacklistEntry"
+        }
+      ],
+      "methods_count": 0,
+      "key_methods": []
+    },
+    {
+      "id": "Models/BlacklistLoginEntry.cs",
+      "path": "Models/BlacklistLoginEntry.cs",
+      "type": "C# Source",
+      "classes": [
+        {
+          "kind": "class",
+          "name": "BlacklistLoginEntry"
+        }
+      ],
+      "methods_count": 0,
+      "key_methods": []
+    },
+    {
+      "id": "Models/BrandStat.cs",
+      "path": "Models/BrandStat.cs",
+      "type": "C# Source",
+      "classes": [
+        {
+          "kind": "class",
+          "name": "BrandStat"
+        }
+      ],
+      "methods_count": 0,
+      "key_methods": []
+    },
+    {
+      "id": "Models/ChronicSeller.cs",
+      "path": "Models/ChronicSeller.cs",
+      "type": "C# Source",
+      "classes": [
+        {
+          "kind": "class",
+          "name": "ChronicSeller"
+        }
+      ],
+      "methods_count": 0,
+      "key_methods": []
+    },
+    {
+      "id": "Models/Constants.cs",
+      "path": "Models/Constants.cs",
+      "type": "C# Source",
+      "classes": [
+        {
+          "kind": "class",
+          "name": "Constants"
+        }
+      ],
+      "methods_count": 0,
+      "key_methods": []
+    },
+    {
+      "id": "Models/DemandArbitrageDeal.cs",
+      "path": "Models/DemandArbitrageDeal.cs",
+      "type": "C# Source",
+      "classes": [
+        {
+          "kind": "class",
+          "name": "DemandArbitrageDeal"
+        }
+      ],
+      "methods_count": 0,
+      "key_methods": []
+    },
+    {
+      "id": "Models/DemandListing.cs",
+      "path": "Models/DemandListing.cs",
+      "type": "C# Source",
+      "classes": [
+        {
+          "kind": "class",
+          "name": "DemandListing"
+        }
+      ],
+      "methods_count": 0,
+      "key_methods": []
+    },
+    {
+      "id": "Models/HotDeal.cs",
+      "path": "Models/HotDeal.cs",
+      "type": "C# Source",
+      "classes": [
+        {
+          "kind": "class",
+          "name": "HotDeal"
+        }
+      ],
+      "methods_count": 0,
+      "key_methods": []
+    },
+    {
+      "id": "Models/Listing.cs",
+      "path": "Models/Listing.cs",
+      "type": "C# Source",
+      "classes": [
+        {
+          "kind": "class",
+          "name": "Listing"
+        },
+        {
+          "kind": "enum",
+          "name": "ListingEventType"
+        },
+        {
+          "kind": "class",
+          "name": "ListingStateEvent"
+        }
+      ],
+      "methods_count": 0,
+      "key_methods": []
+    },
+    {
+      "id": "Models/LlmAnalysisResponse.cs",
+      "path": "Models/LlmAnalysisResponse.cs",
+      "type": "C# Source",
+      "classes": [
+        {
+          "kind": "class",
+          "name": "LlmAnalysisResponse"
+        }
+      ],
+      "methods_count": 0,
+      "key_methods": []
+    },
+    {
+      "id": "Models/QuantVerdict.cs",
+      "path": "Models/QuantVerdict.cs",
+      "type": "C# Source",
+      "classes": [
+        {
+          "kind": "enum",
+          "name": "QuantRating"
+        },
+        {
+          "kind": "class",
+          "name": "QuantEvaluationResult"
+        }
+      ],
+      "methods_count": 0,
+      "key_methods": []
+    },
+    {
+      "id": "Models/RetailPromoPrice.cs",
+      "path": "Models/RetailPromoPrice.cs",
+      "type": "C# Source",
+      "classes": [
+        {
+          "kind": "class",
+          "name": "RetailPromoPrice"
+        }
+      ],
+      "methods_count": 0,
+      "key_methods": []
+    },
+    {
+      "id": "Models/ViewsBucket.cs",
+      "path": "Models/ViewsBucket.cs",
+      "type": "C# Source",
+      "classes": [
+        {
+          "kind": "class",
+          "name": "ViewsBucket"
+        }
+      ],
+      "methods_count": 0,
+      "key_methods": []
+    },
+    {
+      "id": "Services/AIVisionService.cs",
+      "path": "Services/AIVisionService.cs",
+      "type": "C# Source",
+      "classes": [
+        {
+          "kind": "class",
+          "name": "AIVisionService"
+        }
+      ],
+      "methods_count": 1,
+      "key_methods": [
+        "AnalyzeImagesAsync"
+      ]
+    },
+    {
+      "id": "Services/AnalysisAgent.cs",
+      "path": "Services/AnalysisAgent.cs",
+      "type": "C# Source",
+      "classes": [
+        {
+          "kind": "class",
+          "name": "AnalysisAgent"
+        }
+      ],
+      "methods_count": 0,
+      "key_methods": []
+    },
+    {
+      "id": "Services/AntiScamService.cs",
+      "path": "Services/AntiScamService.cs",
+      "type": "C# Source",
+      "classes": [
+        {
+          "kind": "class",
+          "name": "PhotoHashRecord"
+        },
+        {
+          "kind": "class",
+          "name": "AntiScamService"
+        }
+      ],
+      "methods_count": 8,
+      "key_methods": [
+        "BuildCosTable",
+        "BuildAlphaTable",
+        "ComputeHash",
+        "HammingDistance",
+        "SimilarityPercent"
+      ]
+    },
+    {
+      "id": "Services/BrandSpikeAgent.cs",
+      "path": "Services/BrandSpikeAgent.cs",
+      "type": "C# Source",
+      "classes": [
+        {
+          "kind": "class",
+          "name": "BrandSpikeAgent"
+        }
+      ],
+      "methods_count": 0,
+      "key_methods": []
+    },
+    {
+      "id": "Services/CharmPricingService.cs",
+      "path": "Services/CharmPricingService.cs",
+      "type": "C# Source",
+      "classes": [
+        {
+          "kind": "class",
+          "name": "CharmPricingService"
+        }
+      ],
+      "methods_count": 1,
+      "key_methods": [
+        "ApplyCharmPricing"
+      ]
+    },
+    {
+      "id": "Services/ChronicSellerService.cs",
+      "path": "Services/ChronicSellerService.cs",
+      "type": "C# Source",
+      "classes": [
+        {
+          "kind": "class",
+          "name": "ChronicSellerService"
+        }
+      ],
+      "methods_count": 1,
+      "key_methods": [
+        "Detect"
+      ]
+    },
+    {
+      "id": "Services/ClassificationService.cs",
+      "path": "Services/ClassificationService.cs",
+      "type": "C# Source",
+      "classes": [
+        {
+          "kind": "class",
+          "name": "ClassificationService"
+        },
+        {
+          "kind": "class",
+          "name": "ClassificationResult"
+        }
+      ],
+      "methods_count": 1,
+      "key_methods": [
+        "Classify"
+      ]
+    },
+    {
+      "id": "Services/DataAnalysisService.cs",
+      "path": "Services/DataAnalysisService.cs",
+      "type": "C# Source",
+      "classes": [
+        {
+          "kind": "class",
+          "name": "DataAnalysisService"
+        }
+      ],
+      "methods_count": 2,
+      "key_methods": [
+        "Analyze",
+        "ExtractBatteryHealth"
+      ]
+    },
+    {
+      "id": "Services/DatabaseService.cs",
+      "path": "Services/DatabaseService.cs",
+      "type": "C# Source",
+      "classes": [
+        {
+          "kind": "class",
+          "name": "DatabaseService"
+        }
+      ],
+      "methods_count": 20,
+      "key_methods": [
+        "InitializeDatabase",
+        "GetBlacklist",
+        "AddBlacklist",
+        "RemoveBlacklist",
+        "GetBlacklistLogins"
+      ]
+    },
+    {
+      "id": "Services/ExchangeRateService.cs",
+      "path": "Services/ExchangeRateService.cs",
+      "type": "C# Source",
+      "classes": [
+        {
+          "kind": "class",
+          "name": "ExchangeRateService"
+        }
+      ],
+      "methods_count": 1,
+      "key_methods": [
+        "GetEurToMdlRateAsync"
+      ]
+    },
+    {
+      "id": "Services/HotDealBuilder.cs",
+      "path": "Services/HotDealBuilder.cs",
+      "type": "C# Source",
+      "classes": [
+        {
+          "kind": "class",
+          "name": "HotDealBuilder"
+        }
+      ],
+      "methods_count": 2,
+      "key_methods": [
+        "Create",
+        "IsHotDeal"
+      ]
+    },
+    {
+      "id": "Services/ListingClassifier.cs",
+      "path": "Services/ListingClassifier.cs",
+      "type": "C# Source",
+      "classes": [
+        {
+          "kind": "class",
+          "name": "ListingClassifier"
+        }
+      ],
+      "methods_count": 11,
+      "key_methods": [
+        "NormalizePhone",
+        "IsAccessoryOrPartOrOther",
+        "IsBuyAd",
+        "IsFeatureOrRetroPhone",
+        "IsAppleOrIPhone"
+      ]
+    },
+    {
+      "id": "Services/ListingEvaluationService.cs",
+      "path": "Services/ListingEvaluationService.cs",
+      "type": "C# Source",
+      "classes": [
+        {
+          "kind": "class",
+          "name": "ListingEvaluationService"
+        }
+      ],
+      "methods_count": 10,
+      "key_methods": [
+        "GetBestPromo",
+        "EvaluateScore",
+        "ApplyComparisonText",
+        "FindBestPromo",
+        "GetStorageScore"
+      ]
+    },
+    {
+      "id": "Services/MatchingClientService.cs",
+      "path": "Services/MatchingClientService.cs",
+      "type": "C# Source",
+      "classes": [
+        {
+          "kind": "class",
+          "name": "MatchingClientService"
+        }
+      ],
+      "methods_count": 1,
+      "key_methods": [
+        "Reset"
+      ]
+    },
+    {
+      "id": "Services/MetricsRepository.cs",
+      "path": "Services/MetricsRepository.cs",
+      "type": "C# Source",
+      "classes": [
+        {
+          "kind": "class",
+          "name": "MetricsRepository"
+        }
+      ],
+      "methods_count": 2,
+      "key_methods": [
+        "EnsureDatabase",
+        "InsertMetric"
+      ]
+    },
+    {
+      "id": "Services/MetricsService.cs",
+      "path": "Services/MetricsService.cs",
+      "type": "C# Source",
+      "classes": [
+        {
+          "kind": "class",
+          "name": "MetricsService"
+        }
+      ],
+      "methods_count": 5,
+      "key_methods": [
+        "Increment",
+        "GetCounterValue",
+        "SetGauge",
+        "ObserveHistogram",
+        "HandleRequestAsync"
+      ]
+    },
+    {
+      "id": "Services/ModelParserService.cs",
+      "path": "Services/ModelParserService.cs",
+      "type": "C# Source",
+      "classes": [
+        {
+          "kind": "class",
+          "name": "ModelParserService"
+        }
+      ],
+      "methods_count": 2,
+      "key_methods": [
+        "ExtractModel",
+        "CleanNormalizedModel"
+      ]
+    },
+    {
+      "id": "Services/ModelPriceBaselineService.cs",
+      "path": "Services/ModelPriceBaselineService.cs",
+      "type": "C# Source",
+      "classes": [
+        {
+          "kind": "class",
+          "name": "ModelPriceBaselineInfo"
+        },
+        {
+          "kind": "class",
+          "name": "ModelPriceBaselineService"
+        }
+      ],
+      "methods_count": 2,
+      "key_methods": [
+        "GetBaseline",
+        "EstimateDeviceAgeYears"
+      ]
+    },
+    {
+      "id": "Services/NotificationAgent.cs",
+      "path": "Services/NotificationAgent.cs",
+      "type": "C# Source",
+      "classes": [
+        {
+          "kind": "class",
+          "name": "NotificationAgent"
+        }
+      ],
+      "methods_count": 0,
+      "key_methods": []
+    },
+    {
+      "id": "Services/PriceAnalysisService.cs",
+      "path": "Services/PriceAnalysisService.cs",
+      "type": "C# Source",
+      "classes": [
+        {
+          "kind": "class",
+          "name": "PriceAnalysisService"
+        },
+        {
+          "kind": "class",
+          "name": "ExactModelKey"
+        },
+        {
+          "kind": "class",
+          "name": "GeneralModelKey"
+        },
+        {
+          "kind": "class",
+          "name": "PriceAnalysisResult"
+        },
+        {
+          "kind": "class",
+          "name": "ModelPriceInfo"
+        },
+        {
+          "kind": "class",
+          "name": "PriceBucket"
+        },
+        {
+          "kind": "class",
+          "name": "PriceTrend"
+        }
+      ],
+      "methods_count": 10,
+      "key_methods": [
+        "Analyze",
+        "BuildPriceTrends",
+        "BuildPriceBuckets",
+        "ClassifyOutlier",
+        "FilterOutliersIQR"
+      ]
+    },
+    {
+      "id": "Services/PromoKeyHelper.cs",
+      "path": "Services/PromoKeyHelper.cs",
+      "type": "C# Source",
+      "classes": [
+        {
+          "kind": "class",
+          "name": "PromoKeyHelper"
+        }
+      ],
+      "methods_count": 3,
+      "key_methods": [
+        "SanitizeKey",
+        "SanitizePrefix",
+        "NormalizeToken"
+      ]
+    },
+    {
+      "id": "Services/PromoSyncAgent.cs",
+      "path": "Services/PromoSyncAgent.cs",
+      "type": "C# Source",
+      "classes": [
+        {
+          "kind": "class",
+          "name": "PromoSyncAgent"
+        }
+      ],
+      "methods_count": 0,
+      "key_methods": []
+    },
+    {
+      "id": "Services/QuantSniperEngine.cs",
+      "path": "Services/QuantSniperEngine.cs",
+      "type": "C# Source",
+      "classes": [
+        {
+          "kind": "class",
+          "name": "QuantSniperEngine"
+        }
+      ],
+      "methods_count": 3,
+      "key_methods": [
+        "CalculateFairValue",
+        "Evaluate",
+        "GetBrandLiquidityWeight"
+      ]
+    },
+    {
+      "id": "Services/RetailPromoService.cs",
+      "path": "Services/RetailPromoService.cs",
+      "type": "C# Source",
+      "classes": [
+        {
+          "kind": "class",
+          "name": "RetailPromoService"
+        }
+      ],
+      "methods_count": 3,
+      "key_methods": [
+        "InvalidateCache",
+        "AddToMap",
+        "LoadRetailPromoPrices"
+      ]
+    },
+    {
+      "id": "Services/RetryFailedNotificationsAgent.cs",
+      "path": "Services/RetryFailedNotificationsAgent.cs",
+      "type": "C# Source",
+      "classes": [
+        {
+          "kind": "class",
+          "name": "RetryFailedNotificationsAgent"
+        },
+        {
+          "kind": "class",
+          "name": "FailedNotificationEntry"
+        }
+      ],
+      "methods_count": 0,
+      "key_methods": []
+    },
+    {
+      "id": "Services/ScraperAgent.cs",
+      "path": "Services/ScraperAgent.cs",
+      "type": "C# Source",
+      "classes": [
+        {
+          "kind": "class",
+          "name": "ScraperAgent"
+        }
+      ],
+      "methods_count": 0,
+      "key_methods": []
+    },
+    {
+      "id": "Services/TelegramNotificationService.cs",
+      "path": "Services/TelegramNotificationService.cs",
+      "type": "C# Source",
+      "classes": [
+        {
+          "kind": "class",
+          "name": "TelegramNotificationService"
+        },
+        {
+          "kind": "class",
+          "name": "FailedNotification"
+        }
+      ],
+      "methods_count": 13,
+      "key_methods": [
+        "SendTestMessageAsync",
+        "SendTextMessageAsync",
+        "SendHotDealNotificationAsync",
+        "SendListingAlertAsync",
+        "SendMessageAsync"
+      ]
+    },
+    {
+      "id": "Services/WebScraperService.cs",
+      "path": "Services/WebScraperService.cs",
+      "type": "C# Source",
+      "classes": [
+        {
+          "kind": "class",
+          "name": "WebScraperService"
+        }
+      ],
+      "methods_count": 8,
+      "key_methods": [
+        "CreateDefaultHttpClientFactory",
+        "ScrapeSmartphonesAsync",
+        "FetchListingImagesAsync",
+        "FetchListingsGraphQLAsync",
+        "ExtractAdIdFromUrl"
+      ]
+    },
+    {
+      "id": "Services/XiaomiOsSupportService.cs",
+      "path": "Services/XiaomiOsSupportService.cs",
+      "type": "C# Source",
+      "classes": [
+        {
+          "kind": "class",
+          "name": "OsSupportStatus"
+        },
+        {
+          "kind": "class",
+          "name": "XiaomiOsSupportPolicyConfig"
+        },
+        {
+          "kind": "class",
+          "name": "XiaomiOsSupportService"
+        }
+      ],
+      "methods_count": 2,
+      "key_methods": [
+        "LoadPolicyFromFile",
+        "AnalyzeModel"
+      ]
+    },
+    {
+      "id": "Tests/ModelPriceBaselineTests.cs",
+      "path": "Tests/ModelPriceBaselineTests.cs",
+      "type": "C# Source",
+      "classes": [
+        {
+          "kind": "class",
+          "name": "ModelPriceBaselineTests"
+        }
+      ],
+      "methods_count": 2,
+      "key_methods": [
+        "Redmi9_ReturnsRealisticBaselinePrice",
+        "GalaxyA12_ReturnsRealisticBaselinePrice"
+      ]
+    },
+    {
+      "id": "Tests/PromoMatchingTests.cs",
+      "path": "Tests/PromoMatchingTests.cs",
+      "type": "C# Source",
+      "classes": [
+        {
+          "kind": "class",
+          "name": "PromoMatchingTests"
+        }
+      ],
+      "methods_count": 1,
+      "key_methods": [
+        "Run"
+      ]
+    },
+    {
+      "id": "Tests/PromoMatchingUnitTests.cs",
+      "path": "Tests/PromoMatchingUnitTests.cs",
+      "type": "C# Source",
+      "classes": [
+        {
+          "kind": "class",
+          "name": "PromoMatchingUnitTests"
+        }
+      ],
+      "methods_count": 3,
+      "key_methods": [
+        "FindsExactPromo_ByStorage",
+        "FindsGeneralPromo_WithoutStorage",
+        "FindsBrandFallback_WhenNoModelMatch"
+      ]
+    },
+    {
+      "id": "Tests/PromoScoringUnitTests.cs",
+      "path": "Tests/PromoScoringUnitTests.cs",
+      "type": "C# Source",
+      "classes": [
+        {
+          "kind": "class",
+          "name": "PromoScoringUnitTests"
+        }
+      ],
+      "methods_count": 1,
+      "key_methods": [
+        "EvaluateScore_ReflectsPromoComparison_ForNewListing"
+      ]
+    },
+    {
+      "id": "ViewModels/MainViewModel.cs",
+      "path": "ViewModels/MainViewModel.cs",
+      "type": "C# Source",
+      "classes": [
+        {
+          "kind": "class",
+          "name": "MainViewModel"
+        }
+      ],
+      "methods_count": 24,
+      "key_methods": [
+        "OnBlacklistRequested",
+        "OnBlacklistLoginRequested",
+        "CancelScan",
+        "LoadSavedSettings",
+        "UpdateAutoMonitorState"
+      ]
+    },
+    {
+      "id": "ViewModels/RelayCommand.cs",
+      "path": "ViewModels/RelayCommand.cs",
+      "type": "C# Source",
+      "classes": [
+        {
+          "kind": "class",
+          "name": "RelayCommand"
+        },
+        {
+          "kind": "class",
+          "name": "RelayCommand"
+        }
+      ],
+      "methods_count": 5,
+      "key_methods": [
+        "CanExecute",
+        "Execute",
+        "Raise",
+        "CanExecute",
+        "Execute"
+      ]
+    },
+    {
+      "id": "Views/NotificationWindow.cs",
+      "path": "Views/NotificationWindow.cs",
+      "type": "C# Source",
+      "classes": [
+        {
+          "kind": "class",
+          "name": "NotificationWindow"
+        }
+      ],
+      "methods_count": 1,
+      "key_methods": [
+        "RearrangeWindows"
+      ]
+    },
+    {
+      "id": "Views/PriceAnalysisWindow.cs",
+      "path": "Views/PriceAnalysisWindow.cs",
+      "type": "C# Source",
+      "classes": [
+        {
+          "kind": "class",
+          "name": "PriceAnalysisWindow"
+        }
+      ],
+      "methods_count": 1,
+      "key_methods": [
+        "CreateStatBox"
+      ]
+    }
+  ],
+  "core_pipeline_flows": [
+    {
+      "from": "Services/DataAnalysisService.cs",
+      "to": "Services/ListingClassifier.cs",
+      "relation": "classifies incoming ads"
+    },
+    {
+      "from": "Services/ListingClassifier.cs",
+      "to": "Services/AntiScamService.cs",
+      "relation": "verifies defect and scam markers"
+    },
+    {
+      "from": "Services/AntiScamService.cs",
+      "to": "Services/HotDealBuilder.cs",
+      "relation": "evaluates profit and builds hot deals"
+    },
+    {
+      "from": "Services/HotDealBuilder.cs",
+      "to": "Models/QuantVerdict.cs",
+      "relation": "produces quant verdict"
+    },
+    {
+      "from": "MainWindow.xaml.cs",
+      "to": "Services/DataAnalysisService.cs",
+      "relation": "orchestrates UI pipeline"
+    }
+  ]
+}
