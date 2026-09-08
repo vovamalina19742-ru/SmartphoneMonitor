@@ -32,14 +32,18 @@
             /(?:поддельн|копи[яеи]|реплик|fake|replica|copie|1:1|android\s+ios|китайск)/i
         ],
         damaged: [
-            /(?:разбит|трещин|треснут|побит|spart|fisurat|defect|cracked|broken|на\s+запчаст)/i
+            /(?:разбит|трещин|треснут|побит|spart|fisurat|defect|cracked|broken|на\s+запчаст|засвет|пятн[ао]|полос[аы]|выгорани)/i
         ],
         repairs: [
-            /(?:экран|дисплей|ecran|display|стекло|sticl[ae])\s+(?:менял[сяи]|schimbat|inlocuit|copie|oem|spart)/i,
+            /(?:менял[сяись]*|заменен|schimbat|inlocuit)\s+(?:только\s+)?(?:экран|дисплей|ecran|display|стекло|sticl[ae]|аккумулятор|батаре|baterie)/i,
+            /(?:экран|дисплей|ecran|display|стекло|sticl[ae]|аккумулятор|батаре|baterie)\s+(?:менял[сяись]*|заменен|schimbat|inlocuit|copie|oem|spart)/i,
             /(?:без|nu\s+lucreaza|fara)\s+(?:face\s*id|truetone|true\s*tone|touch\s*id)/i
         ],
         box_complete: [
             /(?:коробк\w*|cutie|set\s+complet|pachet\s+complet|полный\s+комплект)/i
+        ],
+        unlocked_explicit: [
+            /(?:не\s+заблокирован|icloud\s+чистый|чистый\s+icloud|fara\s+icloud|accepta\s+orice\s+sim)/i
         ]
     };
 
@@ -96,16 +100,16 @@
         }
 
         // Проверка Neverlock vs Залочен
-        const isNeverlock = RULES.neverlock.some(r => r.test(fullText));
+        const isNeverlock = RULES.neverlock.some(r => r.test(fullText)) || RULES.unlocked_explicit.some(r => r.test(fullText));
         const isLocked = RULES.locked.some(r => r.test(fullText));
 
         // Проверка на ПОДДЕЛКУ / РЕПЛИКУ
         const isFake = RULES.fake.some(r => r.test(fullText));
 
-        // Проверка на ПОВРЕЖДЕНИЯ (битый/трещины)
+        // Проверка на ПОВРЕЖДЕНИЯ (битый/трещины/засветы/пятна)
         const isDamaged = RULES.damaged.some(r => r.test(fullText));
 
-        // Наличие ремонтов / дефектов
+        // Наличие ремонтов / замен (экран/аккумулятор)
         const hasRepairs = RULES.repairs.some(r => r.test(fullText));
 
         // Комплектность (коробка)
