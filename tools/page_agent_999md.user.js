@@ -54,14 +54,25 @@
                        document.querySelector('article') ||
                        document.body;
 
-        const priceEl = document.querySelector('.adPage__content__price-feature') || 
-                        document.querySelector('.adPage__header__price') ||
-                        document.querySelector('.ad-price') ||
-                        document.querySelector('[data-qa="ad-price"]');
+        // Поиск цены по классу, атрибутам и тексту с валютами (MDL, EUR, USD, $)
+        let priceRaw = 'По договоренности';
+        const priceCandidates = Array.from(document.querySelectorAll('span, div, p')).filter(el => {
+            const text = el.innerText ? el.innerText.trim() : '';
+            return /(?:\d[\d\s]*\s*(?:MDL|lei|EUR|€|\$|USD))/i.test(text) && text.length < 35 && el.children.length <= 1;
+        });
+
+        if (priceCandidates.length > 0) {
+            priceRaw = priceCandidates[0].innerText.trim();
+        } else {
+            const priceEl = document.querySelector('.adPage__content__price-feature') || 
+                            document.querySelector('.adPage__header__price') ||
+                            document.querySelector('.ad-price') ||
+                            document.querySelector('[data-qa="ad-price"]');
+            if (priceEl) priceRaw = priceEl.innerText.trim();
+        }
 
         const title = titleEl ? titleEl.innerText.trim() : document.title;
         const description = descEl ? descEl.innerText.trim() : '';
-        const priceRaw = priceEl ? priceEl.innerText.trim() : 'По договоренности';
         const fullText = `${title}\n${description}`;
 
         // Поиск АКБ
