@@ -164,18 +164,19 @@
     }
 
     function injectHUD(data) {
-        if (document.getElementById('page-agent-999-hud')) {
-            return;
+        let hud = document.getElementById('page-agent-999-hud');
+        if (!hud) {
+            hud = document.createElement('div');
+            hud.id = 'page-agent-999-hud';
+            document.body.appendChild(hud);
         }
 
-        const hud = document.createElement('div');
-        hud.id = 'page-agent-999-hud';
         hud.style.cssText = `
             position: fixed;
             bottom: 20px;
             right: 20px;
             z-index: 2147483647;
-            width: 320px;
+            width: 330px;
             background: #18181b;
             color: #f4f4f5;
             border: 1px solid #3f3f46;
@@ -208,7 +209,7 @@
                 <b>Фотографий:</b> ${data.photoCount} шт.
             </div>
             ${data.riskNotes.length > 0 ? `
-                <div style="background: #27272a; padding: 6px 8px; border-radius: 6px; margin-bottom: 8px; font-size: 11px; color: #fca5a5;">
+                <div style="background: #27272a; padding: 6px 8px; border-radius: 6px; margin-bottom: 8px; font-size: 11px; color: #fca5a5; border-left: 3px solid #ef4444;">
                     ${data.riskNotes.join('<br>')}
                 </div>
             ` : ''}
@@ -221,8 +222,6 @@
                 </button>
             </div>
         `;
-
-        document.body.appendChild(hud);
 
         // Обработчик закрытия
         document.getElementById('btn-close-hud').addEventListener('click', () => {
@@ -248,10 +247,11 @@
         injectHUD(data);
     }
 
-    // Запуск при загрузке и при смене SPA роутов
+    // Запуск при загрузке и периодический опрос для SPA
     tryInit();
-    setTimeout(tryInit, 1000);
-    setTimeout(tryInit, 2500);
+    setTimeout(tryInit, 800);
+    setTimeout(tryInit, 2000);
+    setTimeout(tryInit, 4000);
 
     let lastUrl = location.href;
     new MutationObserver(() => {
@@ -260,7 +260,7 @@
             lastUrl = url;
             const existing = document.getElementById('page-agent-999-hud');
             if (existing) existing.remove();
-            setTimeout(tryInit, 1000);
+            setTimeout(tryInit, 500);
         }
     }).observe(document, { subtree: true, childList: true });
 
