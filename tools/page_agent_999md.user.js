@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         999.md Smart Smartphone Agent (Page-Agent Suite)
 // @namespace    https://github.com/vovamalina19742-ru/SmartphoneMonitor
-// @version      1.1.0
-// @description  Автономный ИИ-помощник для 999.md: двуязычный анализ состояния смартфонов, детект перекупов, проверка АКБ/Neverlock и авто-запрос IMEI/состояния в чат.
+// @version      1.2.0
+// @description  Автономный ИИ-помощник для 999.md: двуязычный анализ состояния смартфонов, детект подделок/копий, дефектов, АКБ/Neverlock и авто-запрос IMEI/состояния в чат.
 // @author       SmartphoneMonitor Team & Page-Agent
 // @match        *://999.md/*
 // @match        *://*.999.md/*
@@ -57,8 +57,7 @@
         const descEl = document.querySelector('.adPage__content__description') || 
                        document.querySelector('.adPage__content') ||
                        document.querySelector('[data-qa="ad-description"]') ||
-                       document.querySelector('article') ||
-                       document.body;
+                       document.querySelector('article');
 
         // Поиск цены: проверяем стандартные элементы и текстовые блоки с валютой
         let priceRaw = 'По договоренности';
@@ -82,7 +81,8 @@
 
         const title = titleEl ? titleEl.innerText.trim() : document.title;
         const description = descEl ? descEl.innerText.trim() : '';
-        const fullText = `${title}\n${description}`;
+        // Включаем весь видимый текст страницы для максимального охвата
+        const fullText = `${title}\n${description}\n${document.body ? document.body.innerText : ''}`;
 
         // Поиск АКБ
         let battery = null;
