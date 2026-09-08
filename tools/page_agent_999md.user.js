@@ -27,8 +27,14 @@
         locked: [
             /\b(?:r-?sim|gevey|mdm|i?cloud\s*blocat|rsim|turbo\s*sim)\b/i
         ],
+        fake: [
+            /\b(?:поддельн\w+|копи[яеи]|реплик\w+|fake|replica|copie|1:1|android\s+ios|китайск\w+)\b/i
+        ],
+        damaged: [
+            /\b(?:разбит\w+|трещин\w+|треснут\w+|побит\w+|spart\w*|fisurat\w*|defect\w*|cracked|broken|на\s+запчаст\w+)\b/i
+        ],
         repairs: [
-            /(?:экран|дисплей|ecran|display)\s+(?:менял[сяи]|schimbat|inlocuit|copie|oem)/i,
+            /(?:экран|дисплей|ecran|display|стекло|sticl[ae])\s+(?:менял[сяи]|schimbat|inlocuit|copie|oem|spart)/i,
             /(?:без|nu\s+lucreaza|fara)\s+(?:face\s*id|truetone|true\s*tone|touch\s*id)/i
         ],
         box_complete: [
@@ -54,21 +60,24 @@
                        document.querySelector('article') ||
                        document.body;
 
-        // Поиск цены по классу, атрибутам и тексту с валютами (MDL, EUR, USD, $)
+        // Поиск цены: проверяем стандартные элементы и текстовые блоки с валютой
         let priceRaw = 'По договоренности';
-        const priceCandidates = Array.from(document.querySelectorAll('span, div, p')).filter(el => {
-            const text = el.innerText ? el.innerText.trim() : '';
-            return /(?:\d[\d\s]*\s*(?:MDL|lei|EUR|€|\$|USD))/i.test(text) && text.length < 35 && el.children.length <= 1;
-        });
-
-        if (priceCandidates.length > 0) {
-            priceRaw = priceCandidates[0].innerText.trim();
-        } else {
-            const priceEl = document.querySelector('.adPage__content__price-feature') || 
+        const priceHeader = document.querySelector('.adPage__content__price-feature') || 
                             document.querySelector('.adPage__header__price') ||
-                            document.querySelector('.ad-price') ||
-                            document.querySelector('[data-qa="ad-price"]');
-            if (priceEl) priceRaw = priceEl.innerText.trim();
+                            document.querySelector('.ad-price');
+        
+        if (priceHeader && priceHeader.innerText.trim()) {
+            priceRaw = priceHeader.innerText.trim();
+        } else {
+            // Ищем первый крупный блок с ценой MDL / EUR / $
+            const allElements = Array.from(document.querySelectorAll('h1, h2, h3, div, span'));
+            for (const el of allElements) {
+                const t = el.innerText ? el.innerText.trim() : '';
+                if (/^\d[\d\s]{1,10}\s*(?:MDL|lei|EUR|€|\$|USD)/i.test(t) && t.length < 25 && el.children.length === 0) {
+                    priceRaw = t;
+                    break;
+                }
+            }
         }
 
         const title = titleEl ? titleEl.innerText.trim() : document.title;
@@ -89,6 +98,12 @@
         const isNeverlock = RULES.neverlock.some(r => r.test(fullText));
         const isLocked = RULES.locked.some(r => r.test(fullText));
 
+        // Проверка на ПОДДЕЛКУ / РЕПЛИКУ
+        const isFake = RULES.fake.some(r => r.test(fullText));
+
+        // Проверка на ПОВРЕЖДЕНИЯ (битый/трещины)
+        const isDamaged = RULES.damaged.some(r => r.test(fullText));
+
         // Наличие ремонтов / дефектов
         const hasRepairs = RULES.repairs.some(r => r.test(fullText));
 
@@ -103,13 +118,21 @@
         let riskScore = 0;
         const riskNotes = [];
 
+        if (isFake) {
+            riskScore += 95;
+            riskNotes.push('🚫 ПОДДЕЛКА / РЕПЛИКА (Fake/Copy)');
+        }
+        if (isDamaged) {
+            riskScore += 45;
+            riskNotes.push('💥 Разбито / Трещины / Дефект корпуса');
+        }
         if (isLocked) {
             riskScore += 50;
             riskNotes.push('⚠️ Залочен / R-SIM / MDM');
         }
         if (hasRepairs) {
             riskScore += 30;
-            riskNotes.push('🔧 Есть упоминание ремонта / дефекта');
+            riskNotes.push('🔧 Ремонт / Замена запчастей');
         }
         if (battery !== null && battery < 80) {
             riskScore += 25;
@@ -119,7 +142,7 @@
             riskScore += 15;
             riskNotes.push('📷 Мало фотографий (2 или меньше)');
         }
-        if (!hasBox) {
+        if (!hasBox && !isFake) {
             riskScore += 10;
             riskNotes.push('📦 Нет коробки / документов в описании');
         }
