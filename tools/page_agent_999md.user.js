@@ -38,7 +38,7 @@
             /(?:без|nu\s+lucreaza|fara)\s+(?:face\s*id|truetone|true\s*tone|touch\s*id)/i
         ],
         box_complete: [
-            /(?:коробк|комплект|cutie|set\s+complet|pachet\s+complet|documente|garantie|чек)/i
+            /(?:коробк\w*|cutie|set\s+complet|pachet\s+complet|полный\s+комплект)/i
         ]
     };
 
@@ -49,17 +49,19 @@
     function parseListingDetails() {
         const lang = window.location.pathname.startsWith('/ro') ? 'ro' : 'ru';
         
-        // Универсальный поиск заголовка, описания и цены в разных версиях верстки 999.md
+        // 1. Точный поиск заголовка объявления
         const titleEl = document.querySelector('h1') || 
                         document.querySelector('.adPage__header__title') ||
                         document.querySelector('[data-qa="ad-title"]');
                         
+        // 2. Точный поиск текста описания (не захватываем весь сайт)
         const descEl = document.querySelector('.adPage__content__description') || 
+                       document.querySelector('[itemprop="description"]') ||
+                       document.querySelector('.ad-description') ||
                        document.querySelector('.adPage__content') ||
-                       document.querySelector('[data-qa="ad-description"]') ||
                        document.querySelector('article');
 
-        // Поиск цены: проверяем стандартные элементы и текстовые блоки с валютой
+        // 3. Поиск цены
         let priceRaw = 'По договоренности';
         const priceHeader = document.querySelector('.adPage__content__price-feature') || 
                             document.querySelector('.adPage__header__price') ||
@@ -68,7 +70,6 @@
         if (priceHeader && priceHeader.innerText.trim()) {
             priceRaw = priceHeader.innerText.trim();
         } else {
-            // Ищем первый крупный блок с ценой MDL / EUR / $
             const allElements = Array.from(document.querySelectorAll('h1, h2, h3, div, span'));
             for (const el of allElements) {
                 const t = el.innerText ? el.innerText.trim() : '';
@@ -81,8 +82,7 @@
 
         const title = titleEl ? titleEl.innerText.trim() : document.title;
         const description = descEl ? descEl.innerText.trim() : '';
-        // Включаем весь видимый текст страницы для максимального охвата
-        const fullText = `${title}\n${description}\n${document.body ? document.body.innerText : ''}`;
+        const fullText = `${title}\n${description}`;
 
         // Поиск АКБ
         let battery = null;
@@ -107,14 +107,14 @@
         // Наличие ремонтов / дефектов
         const hasRepairs = RULES.repairs.some(r => r.test(fullText));
 
-        // Комплектность
+        // Комплектность (коробка)
         const hasBox = RULES.box_complete.some(r => r.test(fullText));
 
-        // Подсчет фото
-        const photoEls = document.querySelectorAll('.adPage__content__photos img, .gallery-item img, [data-qa="gallery-image"], img[src*="i.simpalsmedia.com"]');
-        const photoCount = Math.max(photoEls.length, 1);
+        // Точный подсчет фотографий в галерее
+        const thumbs = document.querySelectorAll('.adPage__content__photos__thumb, .gallery-thumbs img, .adPage__content__photos img, [data-qa="gallery-thumb"]');
+        const photoCount = thumbs.length > 0 ? thumbs.length : (document.querySelectorAll('img[src*="simpalsmedia.com/BoardImages"]').length || 1);
 
-        // Расчет риск-скора (0 - 100, чем выше тем подозрительнее)
+        // Расчет риск-скора (0 - 100)
         let riskScore = 0;
         const riskNotes = [];
 
@@ -123,8 +123,8 @@
             riskNotes.push('🚫 ПОДДЕЛКА / РЕПЛИКА (Fake/Copy)');
         }
         if (isDamaged) {
-            riskScore += 45;
-            riskNotes.push('💥 Разбито / Трещины / Дефект корпуса');
+            riskScore += 50;
+            riskNotes.push('💥 Разбито / Трещины / Дефект');
         }
         if (isLocked) {
             riskScore += 50;
@@ -139,12 +139,12 @@
             riskNotes.push(`🔋 Износ батареи: ${battery}%`);
         }
         if (photoCount <= 2) {
-            riskScore += 15;
-            riskNotes.push('📷 Мало фотографий (2 или меньше)');
+            riskScore += 25;
+            riskNotes.push(`📷 Мало фото (${photoCount} шт.) — запросите доп. фото`);
         }
         if (!hasBox && !isFake) {
             riskScore += 10;
-            riskNotes.push('📦 Нет коробки / документов в описании');
+            riskNotes.push('📦 Нет коробки в описании');
         }
 
         return {
