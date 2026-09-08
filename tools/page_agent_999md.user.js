@@ -111,8 +111,40 @@
         const hasBox = RULES.box_complete.some(r => r.test(fullText));
 
         // Точный подсчет фотографий в галерее
-        const thumbs = document.querySelectorAll('.adPage__content__photos__thumb, .gallery-thumbs img, .adPage__content__photos img, [data-qa="gallery-thumb"]');
-        const photoCount = thumbs.length > 0 ? thumbs.length : (document.querySelectorAll('img[src*="simpalsmedia.com/BoardImages"]').length || 1);
+        const thumbs = Array.from(document.querySelectorAll('img')).filter(img => {
+            const src = img.src || img.getAttribute('data-src') || '';
+            return src.includes('BoardImages') || src.includes('simpalsmedia.com/999.md');
+        });
+        const photoCount = Math.max(thumbs.length, 1);
+
+        // Расчет рыночной цены и арбитража из SmartphoneMonitor Базы Знаний
+        let marketBaseline = null;
+        let dealAssessment = '';
+
+        if (/samsung.*a01/i.test(fullText)) marketBaseline = 750;
+        else if (/samsung.*a10/i.test(fullText)) marketBaseline = 850;
+        else if (/samsung.*a12/i.test(fullText)) marketBaseline = 1200;
+        else if (/redmi.*9a/i.test(fullText)) marketBaseline = 900;
+        else if (/redmi.*9c/i.test(fullText)) marketBaseline = 1000;
+        else if (/redmi.*note\s*10/i.test(fullText)) marketBaseline = 1500;
+        else if (/iphone\s*11\b/i.test(fullText)) marketBaseline = 3500;
+        else if (/iphone\s*12\b/i.test(fullText)) marketBaseline = 5200;
+        else if (/iphone\s*13\b/i.test(fullText)) marketBaseline = 7500;
+        else if (/iphone\s*14\b/i.test(fullText)) marketBaseline = 9800;
+        else if (/iphone\s*15\b/i.test(fullText)) marketBaseline = 12500;
+
+        // Извлекаем числовое значение цены в MDL
+        const priceDigits = parseInt(priceRaw.replace(/[^\d]/g, ''), 10);
+        if (marketBaseline && !isNaN(priceDigits) && priceDigits > 0) {
+            const discountPct = Math.round(((marketBaseline - priceDigits) / marketBaseline) * 100);
+            if (discountPct >= 40) {
+                dealAssessment = `🔥 Сверхвыгодная цена: -${discountPct}% от медианы (${marketBaseline} MDL)`;
+            } else if (discountPct >= 15) {
+                dealAssessment = `👍 Выгодная цена: -${discountPct}% от медианы (${marketBaseline} MDL)`;
+            } else if (discountPct <= -25) {
+                dealAssessment = `📈 Завышенная цена: +${Math.abs(discountPct)}% выше рынка (${marketBaseline} MDL)`;
+            }
+        }
 
         // Расчет риск-скора (0 - 100)
         let riskScore = 0;
@@ -139,7 +171,7 @@
             riskNotes.push(`🔋 Износ батареи: ${battery}%`);
         }
         if (photoCount <= 2) {
-            riskScore += 25;
+            riskScore += 20;
             riskNotes.push(`📷 Мало фото (${photoCount} шт.) — запросите доп. фото`);
         }
         if (!hasBox && !isFake) {
@@ -159,6 +191,7 @@
             photoCount,
             riskScore,
             riskNotes,
+            dealAssessment,
             lang
         };
     }
@@ -203,6 +236,7 @@
             </div>
             <div style="margin-bottom: 8px; font-size: 12px; color: #d4d4d8;">
                 <b>Цена:</b> ${data.priceRaw}<br>
+                ${data.dealAssessment ? `<div style="color: #4ade80; font-weight: bold; margin: 2px 0;">${data.dealAssessment}</div>` : ''}
                 <b>АКБ:</b> ${data.battery ? data.battery + '%' : '<span style="color:#f59e0b">Не указан в тексте</span>'}<br>
                 <b>Сеть / SIM:</b> ${data.isLocked ? '<span style="color:#ef4444; font-weight: bold;">BLOCKED</span>' : (data.isNeverlock ? '<span style="color:#22c55e">Neverlock</span>' : 'Не указан')}<br>
                 <b>Комплект:</b> ${data.hasBox ? 'Коробка ✅' : 'Без коробки / Не указано'}<br>
