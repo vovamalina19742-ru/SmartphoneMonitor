@@ -22,23 +22,23 @@
             /(\d{2,3})\s*%\s*(?:акб|baterie|health|bh)/i
         ],
         neverlock: [
-            /\b(?:neverlock|never\s*lock|nevarlock|unlocked|sim\s*free|liber\s*in\s*orice\s*retea)\b/i
+            /(?:neverlock|never\s*lock|nevarlock|unlocked|sim\s*free|liber\s*in\s*orice\s*retea)/i
         ],
         locked: [
-            /\b(?:r-?sim|gevey|mdm|i?cloud\s*blocat|rsim|turbo\s*sim)\b/i
+            /(?:r-?sim|gevey|mdm|i?cloud\s*blocat|rsim|turbo\s*sim)/i
         ],
         fake: [
-            /\b(?:поддельн\w+|копи[яеи]|реплик\w+|fake|replica|copie|1:1|android\s+ios|китайск\w+)\b/i
+            /(?:поддельн|копи[яеи]|реплик|fake|replica|copie|1:1|android\s+ios|китайск)/i
         ],
         damaged: [
-            /\b(?:разбит\w+|трещин\w+|треснут\w+|побит\w+|spart\w*|fisurat\w*|defect\w*|cracked|broken|на\s+запчаст\w+)\b/i
+            /(?:разбит|трещин|треснут|побит|spart|fisurat|defect|cracked|broken|на\s+запчаст)/i
         ],
         repairs: [
             /(?:экран|дисплей|ecran|display|стекло|sticl[ae])\s+(?:менял[сяи]|schimbat|inlocuit|copie|oem|spart)/i,
             /(?:без|nu\s+lucreaza|fara)\s+(?:face\s*id|truetone|true\s*tone|touch\s*id)/i
         ],
         box_complete: [
-            /\b(?:коробк[аеи]|комплект|cutie|set\s+complet|pachet\s+complet|documente|garantie|чек)\b/i
+            /(?:коробк|комплект|cutie|set\s+complet|pachet\s+complet|documente|garantie|чек)/i
         ]
     };
 
