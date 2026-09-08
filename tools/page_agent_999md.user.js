@@ -19,7 +19,8 @@
     const RULES = {
         battery: [
             /(?:акб|батаре[яеи]|аккумулятор|bateri[ae]|health|bh)\s*[:=-]?\s*(\d{2,3})\s*%/i,
-            /(\d{2,3})\s*%\s*(?:акб|baterie|health|bh)/i
+            /(\d{2,3})\s*%\s*(?:акб|baterie|health|bh)/i,
+            /\b([5-9]\d|100)\s*%/i
         ],
         neverlock: [
             /(?:neverlock|never\s*lock|nevarlock|unlocked|sim\s*free|liber\s*in\s*orice\s*retea)/i
@@ -84,7 +85,7 @@
         const description = descEl ? descEl.innerText.trim() : '';
         const fullText = `${title}\n${description}`;
 
-        // Поиск АКБ
+        // Поиск АКБ (включая % прямо в заголовке)
         let battery = null;
         for (const regex of RULES.battery) {
             const m = fullText.match(regex);
@@ -121,17 +122,31 @@
         let marketBaseline = null;
         let dealAssessment = '';
 
-        if (/samsung.*a01/i.test(fullText)) marketBaseline = 750;
+        if (/iphone\s*(?:xs\s*max|xsmax)/i.test(fullText)) marketBaseline = 3500;
+        else if (/iphone\s*xs\b/i.test(fullText)) marketBaseline = 2800;
+        else if (/iphone\s*xr\b/i.test(fullText)) marketBaseline = 2500;
+        else if (/iphone\s*x\b/i.test(fullText)) marketBaseline = 2200;
+        else if (/iphone\s*11\s*pro\s*max/i.test(fullText)) marketBaseline = 5200;
+        else if (/iphone\s*11\s*pro/i.test(fullText)) marketBaseline = 4500;
+        else if (/iphone\s*11\b/i.test(fullText)) marketBaseline = 3600;
+        else if (/iphone\s*12\s*pro\s*max/i.test(fullText)) marketBaseline = 7800;
+        else if (/iphone\s*12\s*pro/i.test(fullText)) marketBaseline = 6800;
+        else if (/iphone\s*12\b/i.test(fullText)) marketBaseline = 5200;
+        else if (/iphone\s*13\s*pro\s*max/i.test(fullText)) marketBaseline = 10500;
+        else if (/iphone\s*13\s*pro/i.test(fullText)) marketBaseline = 9200;
+        else if (/iphone\s*13\b/i.test(fullText)) marketBaseline = 7500;
+        else if (/iphone\s*14\s*pro\s*max/i.test(fullText)) marketBaseline = 14200;
+        else if (/iphone\s*14\s*pro/i.test(fullText)) marketBaseline = 12500;
+        else if (/iphone\s*14\b/i.test(fullText)) marketBaseline = 9800;
+        else if (/iphone\s*15\s*pro\s*max/i.test(fullText)) marketBaseline = 17500;
+        else if (/iphone\s*15\s*pro/i.test(fullText)) marketBaseline = 15200;
+        else if (/iphone\s*15\b/i.test(fullText)) marketBaseline = 12500;
+        else if (/samsung.*a01/i.test(fullText)) marketBaseline = 750;
         else if (/samsung.*a10/i.test(fullText)) marketBaseline = 850;
         else if (/samsung.*a12/i.test(fullText)) marketBaseline = 1200;
         else if (/redmi.*9a/i.test(fullText)) marketBaseline = 900;
         else if (/redmi.*9c/i.test(fullText)) marketBaseline = 1000;
         else if (/redmi.*note\s*10/i.test(fullText)) marketBaseline = 1500;
-        else if (/iphone\s*11\b/i.test(fullText)) marketBaseline = 3500;
-        else if (/iphone\s*12\b/i.test(fullText)) marketBaseline = 5200;
-        else if (/iphone\s*13\b/i.test(fullText)) marketBaseline = 7500;
-        else if (/iphone\s*14\b/i.test(fullText)) marketBaseline = 9800;
-        else if (/iphone\s*15\b/i.test(fullText)) marketBaseline = 12500;
 
         // Извлекаем числовое значение цены в MDL
         const priceDigits = parseInt(priceRaw.replace(/[^\d]/g, ''), 10);
