@@ -390,17 +390,26 @@ namespace SmartphoneMonitor.ViewModels
             {
                 if (p != null)
                 {
-                    try
+                    string rawUrl = p.ToString()!;
+                    if (Uri.TryCreate(rawUrl, UriKind.Absolute, out var uri) &&
+                        (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps))
                     {
-                        Process.Start(new ProcessStartInfo
+                        try
                         {
-                            FileName = p.ToString()!,
-                            UseShellExecute = true
-                        });
+                            Process.Start(new ProcessStartInfo
+                            {
+                                FileName = uri.AbsoluteUri,
+                                UseShellExecute = true
+                            });
+                        }
+                        catch (Exception ex)
+                        {
+                            LogMessage($"⚠️ Ошибка открытия ссылки: {ex.Message}");
+                        }
                     }
-                    catch (Exception ex)
+                    else
                     {
-                        LogMessage($"⚠️ Ошибка открытия ссылки: {ex.Message}");
+                        LogMessage($"⚠️ Отклонен небезопасный URL: {rawUrl}");
                     }
                 }
             });

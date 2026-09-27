@@ -114,15 +114,19 @@ namespace SmartphoneMonitor.Views
                 if (e.OriginalSource == closeBtn) return;
                 if (!isSummary && deal != null && !string.IsNullOrEmpty(deal.Url))
                 {
-                    try
+                    if (Uri.TryCreate(deal.Url, UriKind.Absolute, out var uri) &&
+                        (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps))
                     {
-                        Process.Start(new ProcessStartInfo
+                        try
                         {
-                            FileName = deal.Url,
-                            UseShellExecute = true
-                        });
+                            Process.Start(new ProcessStartInfo
+                            {
+                                FileName = uri.AbsoluteUri,
+                                UseShellExecute = true
+                            });
+                        }
+                        catch {}
                     }
-                    catch {}
                 }
                 this.Close();
             };

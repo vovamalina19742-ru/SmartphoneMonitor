@@ -170,10 +170,14 @@ namespace SmartphoneMonitor.Services
                 if (!string.IsNullOrEmpty(deal.PhoneNumber))
                     sb.AppendLine($"<b>Телефон:</b> <code>{deal.PhoneNumber}</code>");
 
+                string safeDealUrl = (!string.IsNullOrEmpty(deal.Url) && Uri.TryCreate(deal.Url, UriKind.Absolute, out var dUri) && (dUri.Scheme == Uri.UriSchemeHttp || dUri.Scheme == Uri.UriSchemeHttps))
+                    ? dUri.AbsoluteUri
+                    : "https://999.md";
+
                 var buttons = new List<object[]>();
                 var row1 = new List<object>
                 {
-                    new { text = "🔗 Открыть на 999", url = deal.Url }
+                    new { text = "🔗 Открыть на 999", url = safeDealUrl }
                 };
 
                 if (!string.IsNullOrEmpty(deal.PhoneNumber))
@@ -183,17 +187,19 @@ namespace SmartphoneMonitor.Services
 
                 if (!string.IsNullOrEmpty(deal.PhoneNumber))
                 {
+                    string cbPhone = deal.PhoneNumber.Length > 40 ? deal.PhoneNumber.Substring(0, 40) : deal.PhoneNumber;
                     buttons.Add(new[]
                     {
-                        new { text = "🚫 Заблокировать телефон", callback_data = $"blacklist:{deal.PhoneNumber}" }
+                        new { text = "🚫 Заблокировать телефон", callback_data = $"blacklist:{cbPhone}" }
                     });
                 }
 
                 if (!string.IsNullOrEmpty(deal.AuthorLogin))
                 {
+                    string safeLogin = deal.AuthorLogin.Length > 40 ? deal.AuthorLogin.Substring(0, 40) : deal.AuthorLogin;
                     buttons.Add(new[]
                     {
-                        new { text = $"🚫 Заблокировать логин ({deal.AuthorLogin})", callback_data = $"blacklist_login:{deal.AuthorLogin}" }
+                        new { text = $"🚫 Заблокировать логин ({EscapeHtml(safeLogin)})", callback_data = $"blacklist_login:{safeLogin}" }
                     });
                 }
 
@@ -243,12 +249,17 @@ namespace SmartphoneMonitor.Services
                 string url = $"https://api.telegram.org/bot{token}/sendMessage";
                 var sb = new StringBuilder();
 
+                string safeUrl = (!string.IsNullOrEmpty(evt.Url) && Uri.TryCreate(evt.Url, UriKind.Absolute, out var eUri) && (eUri.Scheme == Uri.UriSchemeHttp || eUri.Scheme == Uri.UriSchemeHttps))
+                    ? eUri.AbsoluteUri
+                    : "https://999.md";
+                string encodedUrl = System.Net.WebUtility.HtmlEncode(safeUrl);
+
                 if (evt.Type == ListingEventType.NewListing)
                 {
                     sb.AppendLine("🆕 <b>Новое объявление!</b>");
                     sb.AppendLine($"📱 <b>Модель:</b> {EscapeHtml(evt.Brand)} {EscapeHtml(evt.Title)}");
                     sb.AppendLine($"💰 <b>Цена:</b> {evt.CurrentPrice:N0} MDL");
-                    sb.AppendLine($"🔗 <a href=\"{evt.Url}\">Открыть на сайте</a>");
+                    sb.AppendLine($"🔗 <a href=\"{encodedUrl}\">Открыть на сайте</a>");
                 }
                 else
                 {
@@ -260,14 +271,14 @@ namespace SmartphoneMonitor.Services
                     sb.AppendLine($"📱 <b>Модель:</b> {EscapeHtml(evt.Brand)} {EscapeHtml(evt.Title)}");
                     sb.AppendLine($"🏷 <b>Старая цена:</b> <s>{oldPrice:N0}</s> MDL");
                     sb.AppendLine($"🔥 <b>Новая цена:</b> <b>{evt.CurrentPrice:N0} MDL</b> (-{diff:N0} MDL / <b>-{percent:F1}%</b>)");
-                    sb.AppendLine($"🔗 <a href=\"{evt.Url}\">Открыть на сайте</a>");
+                    sb.AppendLine($"🔗 <a href=\"{encodedUrl}\">Открыть на сайте</a>");
                 }
 
                 var buttons = new List<object[]>
                 {
                     new object[]
                     {
-                        new { text = "🔗 Открыть на 999.md", url = evt.Url }
+                        new { text = "🔗 Открыть на 999.md", url = safeUrl }
                     }
                 };
 
