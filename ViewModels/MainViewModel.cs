@@ -15,6 +15,7 @@ using Newtonsoft.Json;
 using SmartphoneMonitor.Models;
 using SmartphoneMonitor.Services;
 using SmartphoneMonitor.Views;
+using Serilog;
 
 namespace SmartphoneMonitor.ViewModels
 {
@@ -362,9 +363,9 @@ namespace SmartphoneMonitor.ViewModels
         public MainViewModel()
         {
             _dispatcher = Dispatcher.CurrentDispatcher;
-            _scraperService = new WebScraperService();
-            _analysisService = new DataAnalysisService();
             _databaseService = new DatabaseService();
+            _scraperService = new WebScraperService(_databaseService);
+            _analysisService = new DataAnalysisService();
             _exchangeRateService = new ExchangeRateService();
             _telegramService = new TelegramNotificationService();
             _matchingClientService = new MatchingClientService();
@@ -563,7 +564,10 @@ namespace SmartphoneMonitor.ViewModels
                 {
                     _databaseService.CleanPriceHistory(30);
                 }
-                catch { }
+                catch (Exception ex)
+                {
+                    Serilog.Log.Warning(ex, "[MainViewModel] Ошибка фоновой очистки истории цен");
+                }
             });
 
             // Fetch and update EUR rate asynchronously without blocking
@@ -740,7 +744,10 @@ namespace SmartphoneMonitor.ViewModels
                 GC.Collect();
                 GC.WaitForPendingFinalizers();
             }
-            catch { }
+            catch (Exception ex)
+            {
+                Serilog.Log.Debug(ex, "[MainViewModel] Ошибка при вызове сборщика мусора");
+            }
 
             IsBusy = true;
             Progress = 0;
@@ -816,7 +823,10 @@ namespace SmartphoneMonitor.ViewModels
                             {
                                 throw;
                             }
-                            catch { }
+                            catch (Exception ex)
+                            {
+                                Serilog.Log.Debug(ex, "[MainViewModel] Ошибка получения детальной информации объявления {Url}", l?.Url);
+                            }
                             finally
                             {
                                 semaphore.Release();
@@ -851,7 +861,10 @@ namespace SmartphoneMonitor.ViewModels
                                 {
                                     await _telegramService.SendListingAlertAsync(TelegramToken, TelegramChatId, d);
                                 }
-                                catch { }
+                                catch (Exception ex)
+                                {
+                                    Serilog.Log.Warning(ex, "[MainViewModel] Ошибка отправки Telegram-алерта о снижении цены для {Url}", d?.Url);
+                                }
                             });
                         }
                     }
@@ -892,7 +905,10 @@ namespace SmartphoneMonitor.ViewModels
                 {
                     await Task.Run(() => _databaseService.ExportListingsToCsv(analysisResult.AllPrivateListings), token);
                 }
-                catch { }
+                catch (Exception ex)
+                {
+                    Serilog.Log.Warning(ex, "[MainViewModel] Ошибка экспорта объявлений в CSV");
+                }
 
                 // Build views distribution chart buckets
                 UpdateViewsDistribution(analysisResult.AllPrivateListings);
@@ -921,7 +937,10 @@ namespace SmartphoneMonitor.ViewModels
                         {
                             SystemSounds.Asterisk.Play();
                         }
-                        catch { }
+                        catch (Exception ex)
+                        {
+                            Serilog.Log.Debug(ex, "[MainViewModel] Ошибка воспроизведения системного звука");
+                        }
                     }
 
                     if (TelegramEnabled)

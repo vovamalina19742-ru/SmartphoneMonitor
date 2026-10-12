@@ -50,7 +50,10 @@ namespace SmartphoneMonitor.Services
                                 list.Add((r.ts.ToUniversalTime(), r.value));
                             }
                         }
-                        catch { }
+                        catch (Exception ex)
+                        {
+                            Log.Debug(ex, "[BrandSpikeAgent] Ошибка чтения исторических метрик");
+                        }
                     }
 
                     var counters = _metrics.GetCountersByPrefix("promo_matches_brand_");
@@ -149,7 +152,10 @@ namespace SmartphoneMonitor.Services
                                 string msg = $"🚨 Brand spike: *{brandKey}* — +{absoluteDelta} matches (rate {recentRate:F1}/min, baseline {baselineMean:F1}/min)";
                                 _ = _notifier.SendMessageAsync(msg);
                             }
-                            catch { }
+                            catch (Exception ex)
+                            {
+                                Log.Warning(ex, "[BrandSpikeAgent] Ошибка отправки уведомления о спайке бренда");
+                            }
                         }
                     }
                 }

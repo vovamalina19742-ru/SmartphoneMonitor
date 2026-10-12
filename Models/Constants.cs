@@ -3,6 +3,8 @@ namespace SmartphoneMonitor.Models
     public static class Constants
     {
         public static decimal EurToMdl = 19.5m;
+        public static decimal MinPriceMdl = 1000m;
+        public static decimal MaxPriceMdl = 5000m;
 
         public static readonly string[] CommercialMarkers = new string[]
         {

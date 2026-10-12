@@ -13,8 +13,11 @@ obj/
 *.csv
 data/
 logs/
+reports/
 failed_notifications.log
+appsettings.json
 appsettings.Development.json
+!appsettings.example.json
 .env
 *.token
 *.key

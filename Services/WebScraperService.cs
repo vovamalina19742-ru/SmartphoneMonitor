@@ -11,6 +11,7 @@ using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using SmartphoneMonitor.Models;
 using Microsoft.Extensions.DependencyInjection;
+using Serilog;
 
 namespace SmartphoneMonitor.Services
 {
@@ -47,14 +48,17 @@ namespace SmartphoneMonitor.Services
             { "dec", 12 }, { "dec.", 12 }, { "дек", 12 }, { "дек.", 12 }
         };
 
-        public WebScraperService(IHttpClientFactory httpClientFactory)
+        private readonly DatabaseService? _databaseService;
+
+        public WebScraperService(IHttpClientFactory httpClientFactory, DatabaseService? databaseService = null)
         {
             _httpClient = httpClientFactory.CreateClient("scraper");
+            _databaseService = databaseService;
         }
 
         // Legacy constructor for backward compatibility (creates HttpClient directly)
-        [Obsolete("Use WebScraperService(IHttpClientFactory) instead to avoid socket exhaustion")]
-        public WebScraperService() : this(CreateDefaultHttpClientFactory())
+        [Obsolete("Use WebScraperService(IHttpClientFactory, DatabaseService?) instead to avoid socket exhaustion")]
+        public WebScraperService(DatabaseService? databaseService = null) : this(CreateDefaultHttpClientFactory(), databaseService)
         {
         }
 
@@ -296,7 +300,7 @@ namespace SmartphoneMonitor.Services
         private async Task<List<Listing>> FetchListingsGraphQLAsync(int page, decimal eurToMdlRate, CancellationToken cancellationToken)
         {
             var listings = new List<Listing>();
-            string json = $"{{\n  \"input\": {{\n    \"source\": \"AD_SOURCE_DESKTOP_REDESIGN\",\n    \"sort\": \"SORT_ADS_DATE_DESC\",\n    \"pagination\": {{\n      \"limit\": 78,\n      \"skip\": {(page - 1) * 78}\n    }},\n    \"filters\": [\n      {{\n        \"filterId\": 6,\n        \"features\": [\n          {{\n            \"featureId\": 2,\n            \"unit\": \"UNIT_MDL\",\n            \"range\": {{\n              \"min\": \"1000\",\n              \"max\": \"5000\"\n            }}\n          }}\n        ]\n      }},\n      {{\n        \"filterId\": 16,\n        \"features\": [\n          {{\n            \"featureId\": 1,\n            \"optionIds\": [776]\n          }}\n        ]\n      }},\n      {{\n        \"filterId\": 1084,\n        \"features\": [\n          {{\n            \"featureId\": 593,\n            \"optionIds\": [6370, 6371]\n          }}\n        ]\n      }},\n      {{\n        \"filterId\": 290,\n        \"features\": [\n          {{\n            \"featureId\": 7,\n            \"optionIds\": [12900]\n          }}\n        ]\n      }}\n    ],\n    \"subCategoryId\": 40\n  }}\n}}";
+            string json = $"{{\n  \"input\": {{\n    \"source\": \"AD_SOURCE_DESKTOP_REDESIGN\",\n    \"sort\": \"SORT_ADS_DATE_DESC\",\n    \"pagination\": {{\n      \"limit\": 78,\n      \"skip\": {(page - 1) * 78}\n    }},\n    \"filters\": [\n      {{\n        \"filterId\": 6,\n        \"features\": [\n          {{\n            \"featureId\": 2,\n            \"unit\": \"UNIT_MDL\",\n            \"range\": {{\n              \"min\": \"{Constants.MinPriceMdl:F0}\",\n              \"max\": \"{Constants.MaxPriceMdl:F0}\"\n            }}\n          }}\n        ]\n      }},\n      {{\n        \"filterId\": 16,\n        \"features\": [\n          {{\n            \"featureId\": 1,\n            \"optionIds\": [776]\n          }}\n        ]\n      }},\n      {{\n        \"filterId\": 1084,\n        \"features\": [\n          {{\n            \"featureId\": 593,\n            \"optionIds\": [6370, 6371]\n          }}\n        ]\n      }},\n      {{\n        \"filterId\": 290,\n        \"features\": [\n          {{\n            \"featureId\": 7,\n            \"optionIds\": [12900]\n          }}\n        ]\n      }}\n    ],\n    \"subCategoryId\": 40\n  }}\n}}";
             var value = new JObject
             {
                 ["operationName"] = "SearchAds",
@@ -338,6 +342,7 @@ namespace SmartphoneMonitor.Services
                 return listings;
             }
 
+            var demandListings = new List<DemandListing>();
             foreach (var item in (IEnumerable<JToken>)jToken3)
             {
                 try
@@ -364,7 +369,10 @@ namespace SmartphoneMonitor.Services
                             }
                         }
                     }
-                    catch { }
+                    catch (Exception ex)
+                    {
+                        Log.Debug(ex, "[WebScraperService] Ошибка извлечения свойства condition");
+                    }
 
                     title = $"[{conditionText.ToUpperInvariant()}] {title}";
                     decimal price = default(decimal);
@@ -381,7 +389,7 @@ namespace SmartphoneMonitor.Services
                         price = Math.Round(price * eurToMdlRate, 0);
                     }
 
-                    if (price > 0m && (price < 400m || price > 5000m))
+                    if (price > 0m && (price < Constants.MinPriceMdl || price > Constants.MaxPriceMdl))
                     {
                         continue;
                     }
@@ -395,7 +403,10 @@ namespace SmartphoneMonitor.Services
                             brand = brandVal.ToString().Trim();
                         }
                     }
-                    catch { }
+                    catch (Exception ex)
+                    {
+                        Log.Debug(ex, "[WebScraperService] Ошибка извлечения свойства brandFeature");
+                    }
                     if (string.IsNullOrEmpty(brand))
                     {
                         brand = ListingClassifier.DetectBrand(title);
@@ -422,7 +433,10 @@ namespace SmartphoneMonitor.Services
                             }
                         }
                     }
-                    catch { }
+                    catch (Exception ex)
+                    {
+                        Log.Debug(ex, "[WebScraperService] Ошибка извлечения свойства storageFeature");
+                    }
                     if (storageGB <= 0)
                     {
                         storageGB = ListingClassifier.ExtractStorage(title);
@@ -472,7 +486,10 @@ namespace SmartphoneMonitor.Services
                             }
                         }
                     }
-                    catch { }
+                    catch (Exception ex)
+                    {
+                        Log.Debug(ex, "[WebScraperService] Ошибка извлечения изображений объявления");
+                    }
 
                     bool isBuyAd = ListingClassifier.IsBuyAd(item["title"]?.ToString() ?? "");
                     if (isBuyAd)
@@ -491,11 +508,7 @@ namespace SmartphoneMonitor.Services
                             StorageGB = storageGB,
                             IsProcessed = false
                         };
-                        try
-                        {
-                            new DatabaseService().SaveDemandListings(new[] { demandItem });
-                        }
-                        catch { }
+                        demandListings.Add(demandItem);
                         continue;
                     }
 
@@ -521,10 +534,24 @@ namespace SmartphoneMonitor.Services
                         ImageUrls = imageUrls
                     });
                 }
-                catch
+                catch (Exception ex)
                 {
+                    Log.Debug(ex, "[WebScraperService] Ошибка парсинга отдельного объявления");
                 }
             }
+
+            if (demandListings.Count > 0 && _databaseService != null)
+            {
+                try
+                {
+                    _databaseService.SaveDemandListings(demandListings);
+                }
+                catch (Exception ex)
+                {
+                    Log.Warning(ex, "[WebScraperService] Ошибка пакетного сохранения объявлений спроса ({Count})", demandListings.Count);
+                }
+            }
+
             return listings;
         }
 

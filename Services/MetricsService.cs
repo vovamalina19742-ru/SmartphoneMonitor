@@ -6,6 +6,7 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Hosting;
+using Serilog;
 
 namespace SmartphoneMonitor.Services
 {
@@ -33,7 +34,10 @@ namespace SmartphoneMonitor.Services
             {
                 _repo?.InsertMetric(name, value);
             }
-            catch { }
+            catch (Exception ex)
+            {
+                Log.Debug(ex, "[MetricsService] Ошибка сохранения метрики {Name}", name);
+            }
         }
 
         public long GetCounterValue(string name)
@@ -96,7 +100,7 @@ namespace SmartphoneMonitor.Services
                 _ = Task.Run(() => HandleRequestAsync(ctx), stoppingToken);
             }
 
-            try { _listener.Stop(); } catch { }
+            try { _listener.Stop(); } catch (Exception ex) { Log.Debug(ex, "[MetricsService] Ошибка остановки HTTP-слушателя"); }
         }
 
         private async Task HandleRequestAsync(HttpListenerContext ctx)
@@ -135,7 +139,10 @@ namespace SmartphoneMonitor.Services
                     res.Close();
                 }
             }
-            catch { }
+            catch (Exception ex)
+            {
+                Log.Debug(ex, "[MetricsService] Ошибка обработки запроса /metrics");
+            }
         }
     }
 }

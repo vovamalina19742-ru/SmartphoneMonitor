@@ -15,15 +15,48 @@ namespace SmartphoneMonitor.Services
         private static readonly SemaphoreSlim _throttle = new SemaphoreSlim(4, 4);
         private const string BaseUrl = "http://127.0.0.1:8000";
         private static bool _isServerOffline = false;
+        private static DateTime _lastOfflineCheck = DateTime.MinValue;
+        private static readonly TimeSpan _offlineCooldown = TimeSpan.FromSeconds(30);
+
+        public static bool IsServerOffline => _isServerOffline;
 
         public static void Reset()
         {
             _isServerOffline = false;
+            _lastOfflineCheck = DateTime.MinValue;
+        }
+
+        public static async Task<bool> CheckHealthAsync()
+        {
+            try
+            {
+                var response = await _httpClient.GetAsync($"{BaseUrl}/docs");
+                if (response.IsSuccessStatusCode)
+                {
+                    Reset();
+                    return true;
+                }
+            }
+            catch
+            {
+            }
+            return false;
+        }
+
+        private static bool ShouldSkipDueToOffline()
+        {
+            if (!_isServerOffline) return false;
+            if (DateTime.UtcNow - _lastOfflineCheck > _offlineCooldown)
+            {
+                // Cooldown elapsed: allow this request to probe the Python server
+                return false;
+            }
+            return true;
         }
 
         public async Task<(string MatchedModel, double Score, string Status)?> MatchDeviceAsync(string title, string brand)
         {
-            if (_isServerOffline)
+            if (ShouldSkipDueToOffline())
             {
                 return null;
             }
@@ -53,6 +86,7 @@ namespace SmartphoneMonitor.Services
                 double score = data["score"]?.Value<double>() ?? 0.0;
                 string status = data["status"]?.ToString() ?? "CheckRequired";
 
+                _isServerOffline = false;
                 return (matchedModel, score, status);
             }
             catch (Exception ex)
@@ -60,8 +94,9 @@ namespace SmartphoneMonitor.Services
                 if (!_isServerOffline)
                 {
                     Log.Warning(ex, "[MatchingClientService] Python-сервис сопоставления недоступен. Переход в автономный режим (Fallback).");
-                    _isServerOffline = true;
                 }
+                _isServerOffline = true;
+                _lastOfflineCheck = DateTime.UtcNow;
                 return null;
             }
             finally
@@ -76,7 +111,7 @@ namespace SmartphoneMonitor.Services
             decimal marketAverage,
             decimal proposedPrice)
         {
-            if (_isServerOffline)
+            if (ShouldSkipDueToOffline())
             {
                 return null;
             }
@@ -107,6 +142,7 @@ namespace SmartphoneMonitor.Services
                 bool isValid = data["is_valid"]?.Value<bool>() ?? false;
                 string warningMessage = data["warning_message"]?.ToString() ?? "Ошибка валидации.";
 
+                _isServerOffline = false;
                 return (isValid, warningMessage);
             }
             catch (Exception ex)
@@ -114,8 +150,9 @@ namespace SmartphoneMonitor.Services
                 if (!_isServerOffline)
                 {
                     Log.Warning(ex, "[MatchingClientService] Python-сервис сопоставления недоступен. Переход в автономный режим (Fallback).");
-                    _isServerOffline = true;
                 }
+                _isServerOffline = true;
+                _lastOfflineCheck = DateTime.UtcNow;
                 return null;
             }
             finally

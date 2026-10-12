@@ -4,6 +4,7 @@ using System.IO;
 using System.Text;
 using System.Text.RegularExpressions;
 using Microsoft.Data.Sqlite;
+using Serilog;
 using SmartphoneMonitor.Models;
 
 namespace SmartphoneMonitor.Services
@@ -27,7 +28,10 @@ namespace SmartphoneMonitor.Services
             {
                 CleanupOldData(35);
             }
-            catch { }
+            catch (Exception ex)
+            {
+                Log.Warning(ex, "[DatabaseService] Ошибка при фоновой очистке устаревших данных при запуске");
+            }
         }
 
         private void InitializeDatabase()
@@ -171,7 +175,10 @@ namespace SmartphoneMonitor.Services
                         }
                     }
                 }
-                catch { }
+                catch (Exception ex)
+                {
+                    Log.Warning(ex, "[DatabaseService] Ошибка при создании индексов БД");
+                }
             }
         }
 
@@ -468,7 +475,7 @@ namespace SmartphoneMonitor.Services
                         var cAuthorParam = countAuthorCmd.Parameters.Add("$cAuthor", SqliteType.Text);
                         var cPhoneParam = countAuthorCmd.Parameters.Add("$cPhone", SqliteType.Text);
 
-                        string now = DateTime.Now.ToString("o");
+                        string now = DateTime.UtcNow.ToString("o");
 
                         foreach (var l in listings)
                         {
@@ -565,7 +572,10 @@ namespace SmartphoneMonitor.Services
                                     }
                                 }
                             }
-                            catch { }
+                            catch (Exception ex)
+                            {
+                                Log.Debug(ex, "[DatabaseService] Ошибка сохранения записи листинга {Url}", l?.Url);
+                            }
                         }
                     }
                     transaction.Commit();
@@ -623,7 +633,7 @@ namespace SmartphoneMonitor.Services
                         var touchDate = touchCmd.Parameters.Add("$date", SqliteType.Text);
                         var touchUrl = touchCmd.Parameters.Add("$url", SqliteType.Text);
 
-                        string now = DateTime.Now.ToString("o");
+                        string now = DateTime.UtcNow.ToString("o");
 
                         foreach (var l in listings)
                         {
@@ -726,7 +736,10 @@ namespace SmartphoneMonitor.Services
                         {
                             return Newtonsoft.Json.JsonConvert.DeserializeObject<List<string>>(val) ?? new List<string>();
                         }
-                        catch { }
+                        catch (Exception ex)
+                        {
+                            Log.Debug(ex, "[DatabaseService] Ошибка парсинга ImageUrls из кэша для {Url}", url);
+                        }
                     }
                 }
             }
@@ -846,6 +859,13 @@ namespace SmartphoneMonitor.Services
             }
         }
 
+        private static bool IsSensitiveSettingKey(string key)
+        {
+            return string.Equals(key, "TelegramToken", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(key, "GeminiApiKey", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(key, "TelegramChatId", StringComparison.OrdinalIgnoreCase);
+        }
+
         public string GetSetting(string key, string defaultValue)
         {
             using (var connection = new SqliteConnection(_connectionString))
@@ -858,8 +878,8 @@ namespace SmartphoneMonitor.Services
                     var val = command.ExecuteScalar();
                     string raw = val != null ? val.ToString()! : defaultValue;
 
-                    // Decrypt sensitive settings
-                    if (key == "TelegramToken")
+                    // Decrypt sensitive settings (DPAPI)
+                    if (IsSensitiveSettingKey(key))
                     {
                         string decrypted = DecryptString(raw);
                         // If decryption succeeded (non-empty), return it; otherwise return raw for backward compatibility
@@ -882,8 +902,8 @@ namespace SmartphoneMonitor.Services
                 {
                     string finalValue = value;
 
-                    // Encrypt sensitive settings
-                    if (key == "TelegramToken" && !string.IsNullOrEmpty(value))
+                    // Encrypt sensitive settings (DPAPI)
+                    if (IsSensitiveSettingKey(key) && !string.IsNullOrEmpty(value))
                     {
                         finalValue = EncryptString(value);
                     }
@@ -1050,8 +1070,8 @@ namespace SmartphoneMonitor.Services
         {
             int removedPriceHistory = 0;
             int removedDemandListings = 0;
-            DateTime cutoffDate = DateTime.Now.AddDays(-maxAgeDays);
-            string cutoffStr = cutoffDate.ToString("yyyy-MM-dd HH:mm:ss");
+            DateTime cutoffDate = DateTime.UtcNow.AddDays(-maxAgeDays);
+            string cutoffIso = cutoffDate.ToString("o");
 
             try
             {
@@ -1063,16 +1083,16 @@ namespace SmartphoneMonitor.Services
                         using (var cmd = connection.CreateCommand())
                         {
                             cmd.Transaction = transaction;
-                            cmd.CommandText = "DELETE FROM PriceHistory WHERE LastUpdated < @cutoff OR Price <= 0;";
-                            cmd.Parameters.AddWithValue("@cutoff", cutoffStr);
+                            cmd.CommandText = "DELETE FROM PriceHistory WHERE datetime(LastUpdated) < datetime(@cutoff) OR Price <= 0;";
+                            cmd.Parameters.AddWithValue("@cutoff", cutoffIso);
                             removedPriceHistory = cmd.ExecuteNonQuery();
                         }
 
                         using (var cmd = connection.CreateCommand())
                         {
                             cmd.Transaction = transaction;
-                            cmd.CommandText = "DELETE FROM DemandListings WHERE DateAdded < @cutoff OR IsProcessed = 1;";
-                            cmd.Parameters.AddWithValue("@cutoff", cutoffStr);
+                            cmd.CommandText = "DELETE FROM DemandListings WHERE datetime(DateAdded) < datetime(@cutoff) OR IsProcessed = 1;";
+                            cmd.Parameters.AddWithValue("@cutoff", cutoffIso);
                             removedDemandListings = cmd.ExecuteNonQuery();
                         }
 
@@ -1088,7 +1108,7 @@ namespace SmartphoneMonitor.Services
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"[DatabaseCleanup Error]: {ex.Message}");
+                Log.Error(ex, "[DatabaseService] Ошибка при очистке устаревших данных");
             }
 
             return (removedPriceHistory, removedDemandListings);

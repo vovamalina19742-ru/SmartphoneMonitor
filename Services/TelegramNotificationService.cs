@@ -34,7 +34,10 @@ namespace SmartphoneMonitor.Services
             {
                 Directory.CreateDirectory(Path.GetDirectoryName(_failedQueuePath) ?? ".");
             }
-            catch { }
+            catch (Exception ex)
+            {
+                Log.Debug(ex, "[TelegramNotificationService] Ошибка создания каталога для failed_notifications.log");
+            }
         }
 
         public TelegramNotificationService(IHttpClientFactory httpClientFactory)
@@ -45,7 +48,10 @@ namespace SmartphoneMonitor.Services
             {
                 Directory.CreateDirectory(Path.GetDirectoryName(_failedQueuePath) ?? ".");
             }
-            catch { }
+            catch (Exception ex)
+            {
+                Log.Debug(ex, "[TelegramNotificationService] Ошибка создания каталога для failed_notifications.log");
+            }
         }
 
         public async Task<bool> SendTestMessageAsync(string token, string chatId)
@@ -480,7 +486,10 @@ namespace SmartphoneMonitor.Services
                 var content = new StringContent(JsonConvert.SerializeObject(payload), Encoding.UTF8, "application/json");
                 await _httpClient.PostAsync(url, content);
             }
-            catch { }
+            catch (Exception ex)
+            {
+                Log.Debug(ex, "[TelegramNotificationService] Ошибка вызова answerCallbackQuery");
+            }
         }
 
         private async Task EditMessageTextAsync(string token, string chatId, int messageId, string originalText, bool isLogin = false, string blockedItem = "")
@@ -504,7 +513,10 @@ namespace SmartphoneMonitor.Services
                 var content = new StringContent(JsonConvert.SerializeObject(payload), Encoding.UTF8, "application/json");
                 await _httpClient.PostAsync(url, content);
             }
-            catch { }
+            catch (Exception ex)
+            {
+                Log.Debug(ex, "[TelegramNotificationService] Ошибка вызова editMessageText");
+            }
         }
 
         private static string EscapeHtml(string text)

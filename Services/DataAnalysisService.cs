@@ -239,11 +239,17 @@ namespace SmartphoneMonitor.Services
                                     var brandNorm = PromoKeyHelper.SanitizePrefix(l.Brand).TrimEnd('_');
                                     _metricsService.Increment($"promo_matches_brand_{brandNorm}", 1);
                                 }
-                                catch { }
+                                catch (Exception ex)
+                                {
+                                    _logger.Debug(ex, "[DataAnalysisService] Ошибка инкремента метрики промо-матчинга");
+                                }
                             }
                         }
                     }
-                    catch { }
+                    catch (Exception ex)
+                    {
+                        _logger.Debug(ex, "[DataAnalysisService] Ошибка сопоставления промо-акций для листинга {Url}", l?.Url);
+                    }
 
                     double score = _evaluationService.EvaluateScore(l, priceDeviation, referencePrice, retailPromoMap, priceHistory);
                     _evaluationService.ApplyComparisonText(l, priceDeviation, valueLabel, retailPromoMap);
