@@ -1,0 +1,16 @@
+[Unit]
+Description=Smartphone Monitor FAISS Semantic Matching Service
+After=network.target
+
+[Service]
+Type=simple
+User=vladimir
+WorkingDirectory=/DATA/services/matching_service
+ExecStart=/usr/bin/python3 main.py
+Restart=always
+RestartSec=5
+Environment=MATCHING_HOST=0.0.0.0
+Environment=MATCHING_PORT=8000
+
+[Install]
+WantedBy=multi-user.target

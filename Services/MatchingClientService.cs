@@ -13,10 +13,30 @@ namespace SmartphoneMonitor.Services
     {
         private static readonly HttpClient _httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(2) };
         private static readonly SemaphoreSlim _throttle = new SemaphoreSlim(4, 4);
-        private const string BaseUrl = "http://127.0.0.1:8000";
+        private static string _primaryUrl = Environment.GetEnvironmentVariable("SMARTPHONE_MATCHING_URL") ?? "http://192.168.100.22:8000";
+        private static string _fallbackUrl = "http://127.0.0.1:8000";
+        private static string _activeUrl = _primaryUrl;
         private static bool _isServerOffline = false;
         private static DateTime _lastOfflineCheck = DateTime.MinValue;
         private static readonly TimeSpan _offlineCooldown = TimeSpan.FromSeconds(30);
+
+        public static string PrimaryUrl
+        {
+            get => _primaryUrl;
+            set => _primaryUrl = value;
+        }
+
+        public static string FallbackUrl
+        {
+            get => _fallbackUrl;
+            set => _fallbackUrl = value;
+        }
+
+        public static string ActiveUrl
+        {
+            get => _activeUrl;
+            set => _activeUrl = value;
+        }
 
         public static bool IsServerOffline => _isServerOffline;
 
@@ -26,21 +46,43 @@ namespace SmartphoneMonitor.Services
             _lastOfflineCheck = DateTime.MinValue;
         }
 
-        public static async Task<bool> CheckHealthAsync()
+        public static async Task<bool> CheckHealthAsync(string? targetUrl = null)
+        {
+            if (!string.IsNullOrEmpty(targetUrl))
+            {
+                return await ProbeUrlAsync(targetUrl);
+            }
+
+            // 1. Проверяем основной удаленный узел (Linux-сервер)
+            if (await ProbeUrlAsync(_primaryUrl))
+            {
+                _activeUrl = _primaryUrl;
+                Reset();
+                return true;
+            }
+
+            // 2. Если удаленный узел недоступен, проверяем локальный fallback
+            if (!string.Equals(_primaryUrl, _fallbackUrl, StringComparison.OrdinalIgnoreCase) && await ProbeUrlAsync(_fallbackUrl))
+            {
+                _activeUrl = _fallbackUrl;
+                Reset();
+                return true;
+            }
+
+            return false;
+        }
+
+        private static async Task<bool> ProbeUrlAsync(string url)
         {
             try
             {
-                var response = await _httpClient.GetAsync($"{BaseUrl}/docs");
-                if (response.IsSuccessStatusCode)
-                {
-                    Reset();
-                    return true;
-                }
+                var response = await _httpClient.GetAsync($"{url.TrimEnd('/')}/docs");
+                return response.IsSuccessStatusCode;
             }
             catch
             {
+                return false;
             }
-            return false;
         }
 
         private static bool ShouldSkipDueToOffline()
@@ -73,7 +115,7 @@ namespace SmartphoneMonitor.Services
                 string jsonPayload = JsonConvert.SerializeObject(payload);
                 var content = new StringContent(jsonPayload, Encoding.UTF8, "application/json");
 
-                var response = await _httpClient.PostAsync($"{BaseUrl}/match", content);
+                var response = await _httpClient.PostAsync($"{_activeUrl}/match", content);
                 if (!response.IsSuccessStatusCode)
                 {
                     return null;
@@ -130,7 +172,7 @@ namespace SmartphoneMonitor.Services
                 string jsonPayload = JsonConvert.SerializeObject(payload);
                 var content = new StringContent(jsonPayload, Encoding.UTF8, "application/json");
 
-                var response = await _httpClient.PostAsync($"{BaseUrl}/validate", content);
+                var response = await _httpClient.PostAsync($"{_activeUrl}/validate", content);
                 if (!response.IsSuccessStatusCode)
                 {
                     return null;
@@ -206,7 +248,7 @@ namespace SmartphoneMonitor.Services
                     string jsonPayload = JsonConvert.SerializeObject(reqPayload);
                     var content = new StringContent(jsonPayload, Encoding.UTF8, "application/json");
 
-                    var response = await _httpClient.PostAsync($"{BaseUrl}/match_arbitrage", content);
+                    var response = await _httpClient.PostAsync($"{_activeUrl}/match_arbitrage", content);
                     if (response.IsSuccessStatusCode)
                     {
                         string jsonResp = await response.Content.ReadAsStringAsync();

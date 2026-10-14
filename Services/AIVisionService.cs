@@ -124,11 +124,17 @@ namespace SmartphoneMonitor.Services
         {
             if (string.IsNullOrEmpty(apiKey))
             {
+                var localResult = await TryAnalyzeWithLocalOllamaAsync(listingContext);
+                if (localResult != null)
+                {
+                    return localResult;
+                }
+
                 return new LlmAnalysisResponse
                 {
                     IsHotDeal = false,
                     CalculatedPriority = 50.0,
-                    ReasoningSteps = "Ошибка: Ключ Gemini API не настроен."
+                    ReasoningSteps = "Ключ Gemini API не настроен, и локальная Ollama недоступна."
                 };
             }
 
@@ -249,6 +255,13 @@ namespace SmartphoneMonitor.Services
                     }
                 }
 
+                // Fallback to local Ollama if Gemini API calls failed or rate-limited
+                var ollamaFallback = await TryAnalyzeWithLocalOllamaAsync(listingContext);
+                if (ollamaFallback != null)
+                {
+                    return ollamaFallback;
+                }
+
                 return new LlmAnalysisResponse
                 {
                     IsHotDeal = false,
@@ -259,6 +272,13 @@ namespace SmartphoneMonitor.Services
             catch (Exception ex)
             {
                 Log.Error(ex, "[AIVisionService] Исключение при выполнении AnalyzeListingStructuredAsync");
+
+                var ollamaRecovery = await TryAnalyzeWithLocalOllamaAsync(listingContext);
+                if (ollamaRecovery != null)
+                {
+                    return ollamaRecovery;
+                }
+
                 return new LlmAnalysisResponse
                 {
                     IsHotDeal = false,
@@ -266,6 +286,61 @@ namespace SmartphoneMonitor.Services
                     ReasoningSteps = $"Исключение: {ex.Message}"
                 };
             }
+        }
+
+        public async Task<LlmAnalysisResponse?> TryAnalyzeWithLocalOllamaAsync(string listingContext)
+        {
+            try
+            {
+                string promptTemplate = LoadEvaluatorPromptTemplate();
+                string promptText;
+                if (promptTemplate.Contains("{TITLE}") || promptTemplate.Contains("{DESCRIPTION}"))
+                {
+                    promptText = promptTemplate
+                        .Replace("{TITLE}", listingContext ?? string.Empty)
+                        .Replace("{DESCRIPTION}", string.Empty);
+                }
+                else
+                {
+                    promptText = $"{promptTemplate}\n\nListing Context:\n{listingContext}";
+                }
+
+                var requestBody = new
+                {
+                    model = "qwen2.5:3b",
+                    prompt = promptText,
+                    stream = false,
+                    format = "json"
+                };
+
+                string jsonBody = JsonConvert.SerializeObject(requestBody);
+                var content = new StringContent(jsonBody, Encoding.UTF8, "application/json");
+
+                string ollamaUrl = Environment.GetEnvironmentVariable("OLLAMA_BASE_URL") ?? "http://127.0.0.1:11434";
+                var response = await _httpClient.PostAsync($"{ollamaUrl.TrimEnd('/')}/api/generate", content);
+                if (response.IsSuccessStatusCode)
+                {
+                    string responseString = await response.Content.ReadAsStringAsync();
+                    var jsonResponse = JObject.Parse(responseString);
+                    string rawJson = jsonResponse["response"]?.ToString() ?? string.Empty;
+
+                    if (!string.IsNullOrWhiteSpace(rawJson))
+                    {
+                        string cleanedJson = CleanJsonString(rawJson);
+                        var parsedResponse = JsonConvert.DeserializeObject<LlmAnalysisResponse>(cleanedJson);
+                        if (parsedResponse != null)
+                        {
+                            parsedResponse.ReasoningSteps = $"[Local Ollama Zero-Cost] {parsedResponse.ReasoningSteps}";
+                            return parsedResponse;
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Debug(ex, "[AIVisionService] Локальная Ollama недоступна для структурированного анализа.");
+            }
+            return null;
         }
 
         private static string CleanJsonString(string text)

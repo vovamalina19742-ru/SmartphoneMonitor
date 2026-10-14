@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Threading.Channels;
+using System.Threading.Tasks;
 using System.Windows;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -80,41 +81,61 @@ namespace SmartphoneMonitor
 
         private void StartPythonService()
         {
-            try
+            Task.Run(async () =>
             {
-                string baseDir = AppDomain.CurrentDomain.BaseDirectory;
-                string pythonPath = "python";
-                string userPython = $@"C:\Users\{Environment.UserName}\AppData\Local\Programs\Python\Python312\python.exe";
-                if (File.Exists(userPython))
+                try
                 {
-                    pythonPath = userPython;
-                }
-
-                // Поиск скрипта main.py
-                string scriptPath = Path.Combine(baseDir, "scripts", "matching_service", "main.py");
-                if (!File.Exists(scriptPath))
-                {
-                    scriptPath = Path.Combine(Directory.GetCurrentDirectory(), "scripts", "matching_service", "main.py");
-                }
-
-                if (File.Exists(scriptPath))
-                {
-                    var startInfo = new System.Diagnostics.ProcessStartInfo
+                    // 1. Проверяем, доступен ли уже удаленный узел или ранее запущенный сервис
+                    bool isHealthy = await MatchingClientService.CheckHealthAsync();
+                    if (isHealthy)
                     {
-                        FileName = pythonPath,
-                        Arguments = $"\"{scriptPath}\"",
-                        UseShellExecute = false,
-                        CreateNoWindow = true,
-                        WorkingDirectory = Path.GetDirectoryName(scriptPath)
-                    };
+                        Log.Information("[App] Сервис сопоставления доступен ({Url}). Локальный запуск Python пропущен.", MatchingClientService.ActiveUrl);
+                        return;
+                    }
 
-                    _pythonProcess = System.Diagnostics.Process.Start(startInfo);
+                    // 2. Проверяем флаг отключения локального автозапуска (Zero-Cost RAM режим)
+                    string autoStart = Environment.GetEnvironmentVariable("SMARTPHONE_AUTOSTART_PYTHON") ?? "true";
+                    if (string.Equals(autoStart, "false", StringComparison.OrdinalIgnoreCase))
+                    {
+                        Log.Information("[App] Автозапуск локального Python отключен конфигурацией (Zero-Cost RAM).");
+                        return;
+                    }
+
+                    string baseDir = AppDomain.CurrentDomain.BaseDirectory;
+                    string pythonPath = "python";
+                    string userPython = $@"C:\Users\{Environment.UserName}\AppData\Local\Programs\Python\Python312\python.exe";
+                    if (File.Exists(userPython))
+                    {
+                        pythonPath = userPython;
+                    }
+
+                    // Поиск скрипта main.py
+                    string scriptPath = Path.Combine(baseDir, "scripts", "matching_service", "main.py");
+                    if (!File.Exists(scriptPath))
+                    {
+                        scriptPath = Path.Combine(Directory.GetCurrentDirectory(), "scripts", "matching_service", "main.py");
+                    }
+
+                    if (File.Exists(scriptPath))
+                    {
+                        var startInfo = new System.Diagnostics.ProcessStartInfo
+                        {
+                            FileName = pythonPath,
+                            Arguments = $"\"{scriptPath}\"",
+                            UseShellExecute = false,
+                            CreateNoWindow = true,
+                            WorkingDirectory = Path.GetDirectoryName(scriptPath)
+                        };
+
+                        _pythonProcess = System.Diagnostics.Process.Start(startInfo);
+                        Log.Information("[App] Локальный Python-сервис сопоставления запущен.");
+                    }
                 }
-            }
-            catch (Exception ex)
-            {
-                Log.Warning(ex, "Не удалось автоматически запустить Python-сервис сопоставления.");
-            }
+                catch (Exception ex)
+                {
+                    Log.Warning(ex, "Не удалось автоматически запустить Python-сервис сопоставления.");
+                }
+            });
         }
 
         private void StopPythonService()
