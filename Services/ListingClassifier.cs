@@ -32,30 +32,67 @@ namespace SmartphoneMonitor.Services
         public static bool IsAccessoryOrPartOrOther(string title)
         {
             if (string.IsNullOrWhiteSpace(title)) return true;
-            string t = title.ToLowerInvariant();
+            string t = title.ToLowerInvariant().Trim();
 
-            string[] exclusionKeywords = new string[]
+            // 1. Если объявление начинается со слова аксессуара/запчасти — это 100% аксессуар
+            string[] prefixExclusions = new string[]
             {
                 "чехол", "чехлы", "husa", "huse", "sticla", "sticle", "пленка", "пленки", "folie", "folii",
                 "кабель", "cablul", "cablu", "incarcator", "incarcatoare", "casti", "наушники", "airpods",
-                "запчасти", "запчасть", "piese", "piese de schimb", "razborca", "разборка", "разбор",
+                "запчасти", "запчасть", "piese", "razborca", "разборка", "разбор",
                 "детали", "на детали", "дисплей", "ecran", "display", "cutie", "cutii", "коробка", "коробки",
-                "box", "icloud blocat", "icloud locked", "блокирован", "блокированый", "locked", "bypass", "mdm",
-                "на запчасти", "для запчастей", "pentru piese", "pentru piese de schimb", "blocat icloud",
-                "зарядка", "зарядки", "зарядное", "камера", "плата", "платы", "материнская плата", "placa de baza",
                 "шлейф", "корпус", "carcasa", "стекло заднее", "sticla spate",
                 "watch", "часы", "ceas", "ceasuri", "smartwatch", "smart-watch", "fitbit", "mi band", "smart band",
-                "ipad", "планшет", "tableta", "tablet", "стационарный", "домашний телефон", "телефон домашний",
-                "telefon fix"
+                "ipad", "планшет", "tableta", "tablet", "стационарный"
             };
 
-            foreach (var kw in exclusionKeywords)
+            foreach (var pfx in prefixExclusions)
+            {
+                if (Regex.IsMatch(t, @"^" + Regex.Escape(pfx) + @"\b", RegexOptions.IgnoreCase))
+                {
+                    return true;
+                }
+            }
+
+            // 2. Предлоги "для/на/от" с аксессуаром: "чехол для...", "husa pentru...", "коробка от..."
+            string[] relationalExclusions = new string[]
+            {
+                "чехол для", "чехол на", "чехлы на", "чехлы для",
+                "husa pentru", "huse pentru", "sticla pentru", "folie pentru",
+                "коробка от", "коробка для", "cutie de la", "cutie pentru",
+                "дисплей для", "ecran pentru", "display pentru",
+                "запчасти для", "запчасти от", "piese pentru", "piese de la",
+                "зарядка для", "зарядное для", "incarcator pentru",
+                "кабель для", "cablu pentru", "аккумулятор для", "baterie pentru",
+                "icloud blocat", "icloud locked", "blocat icloud", "bypass icloud",
+                "на запчасти", "для запчастей", "pentru piese"
+            };
+
+            foreach (var kw in relationalExclusions)
             {
                 if (t.Contains(kw))
                 {
                     return true;
                 }
             }
+
+            // 3. Другие категории (не телефоны)
+            string[] otherCategories = new string[]
+            {
+                "smartwatch", "smart-watch", "apple watch", "galaxy watch",
+                "airpods", "galaxy buds", "redmi buds",
+                "ipad pro", "ipad air", "ipad mini", "планшет", "tableta",
+                "домашний телефон", "телефон домашний", "telefon fix"
+            };
+
+            foreach (var oc in otherCategories)
+            {
+                if (t.Contains(oc))
+                {
+                    return true;
+                }
+            }
+
             return false;
         }
 

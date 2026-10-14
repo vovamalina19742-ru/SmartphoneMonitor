@@ -168,6 +168,9 @@ namespace SmartphoneMonitor.Services
                 .GroupBy(l => (brand: l.Brand, model: l.Model, storage: l.StorageGB))
                 .ToList();
 
+            var brandWeekAccumulators = new Dictionary<string, (double weightedSum, int count)>(StringComparer.OrdinalIgnoreCase);
+            var brandMonthAccumulators = new Dictionary<string, (double weightedSum, int count)>(StringComparer.OrdinalIgnoreCase);
+
             foreach (var key in brandModelStorage)
             {
                 try
@@ -184,21 +187,24 @@ namespace SmartphoneMonitor.Services
                     // 7-day trend
                     var weekAgo = now.AddDays(-7);
                     var weekEntries = sorted.Where(h => h.date >= weekAgo).ToList();
-                    if (weekEntries.Count >= 2)
+                    var priorWeekEntries = sorted.Where(h => h.date < weekAgo && h.date >= now.AddDays(-14)).ToList();
+                    if (priorWeekEntries.Count == 0)
                     {
-                        var weekAvg1 = sorted.TakeLast(Math.Min(weekEntries.Count, sorted.Count - weekEntries.Count))
-                            .Average(h => (double)h.price);
-                        var weekAvg2 = weekEntries.Average(h => (double)h.price);
-                        double weekChange = weekAvg1 > 0
-                            ? Math.Round((weekAvg2 - weekAvg1) / weekAvg1 * 100.0, 1)
+                        priorWeekEntries = sorted.Where(h => h.date < weekAgo).ToList();
+                    }
+
+                    if (weekEntries.Count >= 1 && priorWeekEntries.Count >= 1)
+                    {
+                        var priorAvg = priorWeekEntries.Average(h => (double)h.price);
+                        var currentAvg = weekEntries.Average(h => (double)h.price);
+                        double weekChange = priorAvg > 0
+                            ? Math.Round((currentAvg - priorAvg) / priorAvg * 100.0, 1)
                             : 0.0;
 
-                        string direction = weekChange switch
-                        {
-                            > 3.0 => "up",
-                            < -3.0 => "down",
-                            _ => "stable"
-                        };
+                        if (!brandWeekAccumulators.ContainsKey(key.Key.brand))
+                            brandWeekAccumulators[key.Key.brand] = (0, 0);
+                        var cur = brandWeekAccumulators[key.Key.brand];
+                        brandWeekAccumulators[key.Key.brand] = (cur.weightedSum + weekChange * weekEntries.Count, cur.count + weekEntries.Count);
 
                         if (!trendBrands.ContainsKey(key.Key.brand))
                         {
@@ -207,31 +213,30 @@ namespace SmartphoneMonitor.Services
 
                         var brandTrend = trendBrands[key.Key.brand];
                         brandTrend.SampleCount += weekEntries.Count;
-                        brandTrend.WeekChangePercent += weekChange;
-
-                        // accumulate directions — use last model's direction as tiebreaker
-                        brandTrend.Direction7d = direction;
-                        brandTrend.WeekPriceAvg = Math.Round((decimal)weekEntries.Average(h => (double)h.price), 0);
+                        brandTrend.WeekPriceAvg = Math.Round((decimal)currentAvg, 0);
                     }
 
                     // 30-day trend
                     var monthAgo = now.AddDays(-30);
                     var monthEntries = sorted.Where(h => h.date >= monthAgo).ToList();
-                    if (monthEntries.Count >= 2)
+                    var priorMonthEntries = sorted.Where(h => h.date < monthAgo && h.date >= now.AddDays(-60)).ToList();
+                    if (priorMonthEntries.Count == 0)
                     {
-                        var monthAvg1 = sorted.Take(Math.Max(0, sorted.Count - monthEntries.Count))
-                            .Select(h => (double)h.price).DefaultIfEmpty(0).Average();
-                        var monthAvg2 = monthEntries.Average(h => (double)h.price);
-                        double monthChange = monthAvg1 > 0
-                            ? Math.Round((monthAvg2 - monthAvg1) / monthAvg1 * 100.0, 1)
+                        priorMonthEntries = sorted.Where(h => h.date < monthAgo).ToList();
+                    }
+
+                    if (monthEntries.Count >= 1 && priorMonthEntries.Count >= 1)
+                    {
+                        var priorMonthAvg = priorMonthEntries.Average(h => (double)h.price);
+                        var currentMonthAvg = monthEntries.Average(h => (double)h.price);
+                        double monthChange = priorMonthAvg > 0
+                            ? Math.Round((currentMonthAvg - priorMonthAvg) / priorMonthAvg * 100.0, 1)
                             : 0.0;
 
-                        string dir30 = monthChange switch
-                        {
-                            > 5.0 => "up",
-                            < -5.0 => "down",
-                            _ => "stable"
-                        };
+                        if (!brandMonthAccumulators.ContainsKey(key.Key.brand))
+                            brandMonthAccumulators[key.Key.brand] = (0, 0);
+                        var curM = brandMonthAccumulators[key.Key.brand];
+                        brandMonthAccumulators[key.Key.brand] = (curM.weightedSum + monthChange * monthEntries.Count, curM.count + monthEntries.Count);
 
                         if (!trendBrands.ContainsKey(key.Key.brand))
                         {
@@ -239,14 +244,42 @@ namespace SmartphoneMonitor.Services
                         }
 
                         var bt = trendBrands[key.Key.brand];
-                        bt.MonthChangePercent += monthChange;
-                        bt.Direction30d = dir30;
-                        bt.MonthPriceAvg = Math.Round((decimal)monthEntries.Average(h => (double)h.price), 0);
+                        bt.MonthPriceAvg = Math.Round((decimal)currentMonthAvg, 0);
                     }
                 }
                 catch
                 {
                     // skip if DB query fails (e.g., schema mismatch)
+                }
+            }
+
+            foreach (var kvp in brandWeekAccumulators)
+            {
+                if (trendBrands.TryGetValue(kvp.Key, out var bt) && kvp.Value.count > 0)
+                {
+                    double avgChange = Math.Round(kvp.Value.weightedSum / kvp.Value.count, 1);
+                    bt.WeekChangePercent = avgChange;
+                    bt.Direction7d = avgChange switch
+                    {
+                        > 3.0 => "up",
+                        < -3.0 => "down",
+                        _ => "stable"
+                    };
+                }
+            }
+
+            foreach (var kvp in brandMonthAccumulators)
+            {
+                if (trendBrands.TryGetValue(kvp.Key, out var bt) && kvp.Value.count > 0)
+                {
+                    double avgChange = Math.Round(kvp.Value.weightedSum / kvp.Value.count, 1);
+                    bt.MonthChangePercent = avgChange;
+                    bt.Direction30d = avgChange switch
+                    {
+                        > 5.0 => "up",
+                        < -5.0 => "down",
+                        _ => "stable"
+                    };
                 }
             }
 
