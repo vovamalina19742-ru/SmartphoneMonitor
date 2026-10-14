@@ -47,17 +47,6 @@ namespace SmartphoneMonitor.Services
                 return "Другой";
             }
 
-            if (useSemantic)
-            {
-                // Попытка семантического сопоставления через локальный Python API
-                var vectorMatchTask = _matchingClient.MatchDeviceAsync(title, brand);
-                var apiResult = vectorMatchTask.GetAwaiter().GetResult();
-                if (apiResult != null && apiResult.Value.Score >= 0.50)
-                {
-                    return apiResult.Value.MatchedModel;
-                }
-            }
-
             string text = title.ToLowerInvariant();
             
             // Очистка явных цен (например, "1300 lei", "450 €") чтобы они не слипались с названием модели
@@ -74,6 +63,7 @@ namespace SmartphoneMonitor.Services
                 _ => null
             };
 
+            // 1. Сверхбыстрый детерминированный поиск по словарю известных моделей (0 мс, без сети)
             if (modelList != null)
             {
                 foreach (string modelCandidate in modelList)
@@ -104,6 +94,24 @@ namespace SmartphoneMonitor.Services
                         return "Galaxy " + normalizedModel;
                     }
                     return normalizedModel;
+                }
+            }
+
+            // 2. Семантическое сопоставление через локальный Python API только для нераспознанных сложных названий
+            if (useSemantic)
+            {
+                try
+                {
+                    var vectorMatchTask = _matchingClient.MatchDeviceAsync(title, brand);
+                    var apiResult = vectorMatchTask.GetAwaiter().GetResult();
+                    if (apiResult != null && apiResult.Value.Score >= 0.50)
+                    {
+                        return apiResult.Value.MatchedModel;
+                    }
+                }
+                catch
+                {
+                    // Игнорируем недоступность локального Python-сервиса
                 }
             }
 

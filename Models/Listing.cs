@@ -177,6 +177,7 @@ namespace SmartphoneMonitor.Models
         public bool IsDuplicatePhotoDetected { get; set; }
         public string DuplicateSourceInfo { get; set; } = string.Empty;
         public System.Collections.Generic.List<ulong> PhotoHashes { get; set; } = new System.Collections.Generic.List<ulong>();
+        public QuantEvaluationResult? QuantEvaluation { get; set; }
 
         public string ScamWarningBadge => IsDuplicatePhotoDetected ? "⚠️ ПЕРЕЗАЛИВ ФОТО (СКАМ)" : string.Empty;
         public string ScamWarningBg => IsDuplicatePhotoDetected ? "#FEE2E2" : "Transparent";

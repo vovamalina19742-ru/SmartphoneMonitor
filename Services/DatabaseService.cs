@@ -87,6 +87,16 @@ namespace SmartphoneMonitor.Services
                             StorageGB INTEGER,
                             IsProcessed INTEGER DEFAULT 0
                         );
+                        CREATE TABLE IF NOT EXISTS PhotoHashes (
+                            Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            PrimaryHash TEXT NOT NULL,
+                            DHash TEXT NOT NULL DEFAULT '0',
+                            ListingUrl TEXT NOT NULL,
+                            AuthorLogin TEXT,
+                            Price REAL,
+                            FirstSeen TEXT
+                        );
+                        CREATE INDEX IF NOT EXISTS idx_photo_hashes_primary ON PhotoHashes(PrimaryHash);
                         CREATE INDEX IF NOT EXISTS idx_price_history_last_updated ON PriceHistory(LastUpdated);
                     ";
                     command.ExecuteNonQuery();
@@ -1112,6 +1122,66 @@ namespace SmartphoneMonitor.Services
             }
 
             return (removedPriceHistory, removedDemandListings);
+        }
+
+        public List<PhotoHashRecord> LoadPhotoHashes()
+        {
+            var list = new List<PhotoHashRecord>();
+            try
+            {
+                using var connection = new SqliteConnection(_connectionString);
+                connection.Open();
+                using var cmd = connection.CreateCommand();
+                cmd.CommandText = "SELECT PrimaryHash, DHash, ListingUrl, AuthorLogin, Price, FirstSeen FROM PhotoHashes ORDER BY Id DESC LIMIT 10000;";
+                using var reader = cmd.ExecuteReader();
+                while (reader.Read())
+                {
+                    string pHashStr = reader.GetString(0);
+                    string dHashStr = reader.IsDBNull(1) ? "0" : reader.GetString(1);
+                    if (ulong.TryParse(pHashStr, System.Globalization.NumberStyles.HexNumber, null, out ulong pHash) || ulong.TryParse(pHashStr, out pHash))
+                    {
+                        ulong.TryParse(dHashStr, System.Globalization.NumberStyles.HexNumber, null, out ulong dHash);
+                        list.Add(new PhotoHashRecord
+                        {
+                            PrimaryHash = pHash,
+                            DHash = dHash,
+                            ListingUrl = reader.IsDBNull(2) ? "" : reader.GetString(2),
+                            AuthorLogin = reader.IsDBNull(3) ? "" : reader.GetString(3),
+                            Price = reader.IsDBNull(4) ? 0m : Convert.ToDecimal(reader.GetDouble(4)),
+                            FirstSeen = reader.IsDBNull(5) ? DateTime.Now : (DateTime.TryParse(reader.GetString(5), out var dt) ? dt : DateTime.Now)
+                        });
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Warning(ex, "[DatabaseService] Ошибка загрузки хэшей фотографий из базы");
+            }
+            return list;
+        }
+
+        public void SavePhotoHash(PhotoHashRecord record)
+        {
+            try
+            {
+                using var connection = new SqliteConnection(_connectionString);
+                connection.Open();
+                using var cmd = connection.CreateCommand();
+                cmd.CommandText = @"
+                    INSERT INTO PhotoHashes (PrimaryHash, DHash, ListingUrl, AuthorLogin, Price, FirstSeen)
+                    VALUES (@pHash, @dHash, @url, @login, @price, @seen);";
+                cmd.Parameters.AddWithValue("@pHash", record.PrimaryHash.ToString("X16"));
+                cmd.Parameters.AddWithValue("@dHash", record.DHash.ToString("X16"));
+                cmd.Parameters.AddWithValue("@url", record.ListingUrl);
+                cmd.Parameters.AddWithValue("@login", record.AuthorLogin ?? string.Empty);
+                cmd.Parameters.AddWithValue("@price", Convert.ToDouble(record.Price));
+                cmd.Parameters.AddWithValue("@seen", record.FirstSeen.ToString("o"));
+                cmd.ExecuteNonQuery();
+            }
+            catch (Exception ex)
+            {
+                Log.Warning(ex, "[DatabaseService] Ошибка сохранения хэша фотографии в базу");
+            }
         }
     }
 }

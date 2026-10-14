@@ -12,9 +12,11 @@ namespace SmartphoneMonitor.Services
     /// </summary>
     public class QuantSniperEngine
     {
-        // Матрица ликвидности брендов Android (вес от 0.7 до 1.0)
-        private static readonly Dictionary<string, double> AndroidLiquidityWeights = new(StringComparer.OrdinalIgnoreCase)
+        // Матрица ликвидности брендов (вес от 0.7 до 1.0)
+        private static readonly Dictionary<string, double> BrandLiquidityWeights = new(StringComparer.OrdinalIgnoreCase)
         {
+            { "apple", 1.0 },
+            { "iphone", 1.0 },
             { "samsung", 1.0 },
             { "galaxy", 1.0 },
             { "xiaomi", 0.95 },
@@ -176,13 +178,13 @@ namespace SmartphoneMonitor.Services
             if (string.IsNullOrWhiteSpace(brandOrModel))
                 return 0.80;
 
-            foreach (var kvp in AndroidLiquidityWeights)
+            foreach (var kvp in BrandLiquidityWeights)
             {
                 if (brandOrModel.Contains(kvp.Key, StringComparison.OrdinalIgnoreCase))
                     return kvp.Value;
             }
 
-            return 0.80; // Базовый вес для других Android брендов
+            return 0.80; // Базовый вес для других брендов
         }
     }
 }

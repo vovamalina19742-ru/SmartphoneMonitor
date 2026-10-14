@@ -48,7 +48,7 @@ namespace SmartphoneMonitor.Services
 
         public static bool IsHotDeal(Listing listing, double recommendationScore)
         {
-            if (listing.IsStolen || listing.HasCriticalDefect) return false;
+            if (listing.IsStolen || listing.HasCriticalDefect || listing.IsDuplicatePhotoDetected) return false;
 
             // Strict Reseller / Commercial Filter: Resellers NEVER qualify for Hot Deals
             bool isReseller = listing.SellerType.Equals("RESELLER", StringComparison.OrdinalIgnoreCase) ||

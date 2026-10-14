@@ -19,6 +19,7 @@ namespace SmartphoneMonitor.Services
         private readonly ChronicSellerService _chronicSellerService;
         private readonly PriceAnalysisService _priceAnalysisService;
         private readonly MatchingClientService _matchingClient = new MatchingClientService();
+        private readonly QuantSniperEngine _quantSniperEngine = new QuantSniperEngine();
 
         // Default constructor for legacy callers (uses new instances)
         public DataAnalysisService() : this(new MetricsService(new MetricsRepository())) { }
@@ -286,13 +287,6 @@ namespace SmartphoneMonitor.Services
                         l.ComparisonBg = "#F2F2F7";
                         score = 0.0;
                     }
-                    else if (ListingClassifier.IsAppleOrIPhone(l.Title, l.Brand))
-                    {
-                        l.ComparisonText = "⚠️ Исключено: iPhone";
-                        l.ComparisonColor = "#8E8E93";
-                        l.ComparisonBg = "#F2F2F7";
-                        score = 0.0;
-                    }
                     else if (isReseller)
                     {
                         l.ComparisonText = "🏬 Перекупщик / Витрина";
@@ -444,9 +438,13 @@ namespace SmartphoneMonitor.Services
 
                     l.AiReasoning = reasoning.ToString();
 
+                    // Количественная оценка через QuantSniperEngine
+                    var quantEval = _quantSniperEngine.Evaluate(l, referencePrice, l.IsDuplicatePhotoDetected, isReseller);
+                    l.QuantEvaluation = quantEval;
+
                     if (HotDealBuilder.IsHotDeal(l, score))
                     {
-                        analysisResult.HotDeals.Add(HotDealBuilder.Create(l, score, referencePrice, Math.Round((double)priceDeviation, 1)));
+                        analysisResult.HotDeals.Add(HotDealBuilder.Create(l, score, referencePrice, Math.Round((double)priceDeviation, 1), quantEval));
                     }
                 }
                 else

@@ -369,7 +369,7 @@ namespace SmartphoneMonitor.ViewModels
             _exchangeRateService = new ExchangeRateService();
             _telegramService = new TelegramNotificationService();
             _matchingClientService = new MatchingClientService();
-            _antiScamService = new AntiScamService();
+            _antiScamService = new AntiScamService(_databaseService);
             _telegramService.BlacklistRequested += OnBlacklistRequested;
             _telegramService.BlacklistLoginRequested += OnBlacklistLoginRequested;
 
