@@ -349,7 +349,7 @@ namespace SmartphoneMonitor.Services
                 {
                     string id = ((string?)item["id"]) ?? "";
                     string title = ((string?)item["title"]) ?? "";
-                    if (ListingClassifier.IsAccessoryOrPartOrOther(title) || ListingClassifier.IsFeatureOrRetroPhone(title) || ListingClassifier.IsAppleOrIPhone(title))
+                    if (ListingClassifier.IsAccessoryOrPartOrOther(title) || ListingClassifier.IsFeatureOrRetroPhone(title))
                     {
                         continue;
                     }
